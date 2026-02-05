@@ -189,9 +189,22 @@ async function startSession(sessionId) {
         defaultQueryTimeoutMs: 120000, // Increased timeout
         fireInitQueries: true,
         generateHighQualityLinkPreview: true,
-        markOnlineOnConnect: true, 
+        markOnlineOnConnect: true,
+        emitOwnEvents: true, // Emit events for own messages too
+        shouldSyncHistoryMessage: () => true, // Always sync history messages
         getMessage: async (key) => {
-            return { conversation: 'hello' };
+            // Try to get message from DB
+            const { data } = await supabase
+                .from('whatsapp_messages')
+                .select('full_message_json')
+                .eq('session_id', sessionId)
+                .eq('message_id', key.id)
+                .single();
+            
+            if (data?.full_message_json?.message) {
+                return data.full_message_json.message;
+            }
+            return { conversation: 'Message not found' };
         },
         msgRetryCounterCache: sessions.get(sessionId)?.msgRetryCounterCache || new Map() 
     });
@@ -310,6 +323,8 @@ async function startSession(sessionId) {
     });
 
     sock.ev.on('contacts.upsert', async (contacts) => {
+        console.log(`[${sessionId}] Received ${contacts.length} contact updates`);
+        
         // Update local cache
         const cache = contactCache.get(sessionId);
         if (cache) {
@@ -330,11 +345,72 @@ async function startSession(sessionId) {
         // Baileys contact update usually contains the name if available.
         saveContactsToSupabase(sessionId, contacts);
     });
+    
+    // Add listener for contact updates (when contact info changes)
+    sock.ev.on('contacts.update', async (updates) => {
+        console.log(`[${sessionId}] Received ${updates.length} contact info updates`);
+        
+        const cache = contactCache.get(sessionId);
+        const contactsToUpdate = updates.map(update => {
+            const existing = cache?.get(update.id) || {};
+            const merged = { ...existing, ...update };
+            
+            if (cache) cache.set(update.id, merged);
+            
+            return {
+                session_id: sessionId,
+                jid: update.id,
+                name: merged.name || merged.notify || merged.verifiedName || null,
+                notify: merged.notify || null,
+                updated_at: new Date()
+            };
+        });
+        
+        if (contactsToUpdate.length > 0) {
+            await supabase.from('whatsapp_contacts')
+                .upsert(contactsToUpdate, { onConflict: 'session_id,jid' });
+        }
+    });
+    
+    // Add listener for group updates
+    sock.ev.on('groups.update', async (updates) => {
+        console.log(`[${sessionId}] Received ${updates.length} group updates`);
+        
+        const groupUpdates = updates.map(update => ({
+            session_id: sessionId,
+            jid: update.id,
+            name: update.subject || null,
+            notify: update.subject || null,
+            is_group: true,
+            updated_at: new Date()
+        }));
+        
+        if (groupUpdates.length > 0) {
+            await supabase.from('whatsapp_contacts')
+                .upsert(groupUpdates, { onConflict: 'session_id,jid' });
+        }
+    });
 
     sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest }) => {
-        console.log(`[History] Received ${chats.length} chats, ${contacts.length} contacts, ${messages.length} messages`);
+        console.log(`[${sessionId}] [History] Received ${chats.length} chats, ${contacts.length} contacts, ${messages.length} messages (isLatest: ${isLatest})`);
         
-        // 1. Save Contacts (and update cache)
+        // 1. Save Chats info to contacts
+        if (chats.length > 0) {
+            const chatContacts = chats.map(chat => ({
+                session_id: sessionId,
+                jid: chat.id,
+                name: chat.name || chat.id.split('@')[0],
+                notify: chat.name,
+                is_group: chat.id.endsWith('@g.us'),
+                unread_count: chat.unreadCount || 0,
+                updated_at: new Date(chat.conversationTimestamp * 1000 || Date.now())
+            }));
+            
+            await supabase.from('whatsapp_contacts')
+                .upsert(chatContacts, { onConflict: 'session_id,jid' });
+        }
+        
+        // 2. Save Contacts (and update cache)
         if (contacts.length > 0) {
             const cache = contactCache.get(sessionId);
             if (cache) {
@@ -345,9 +421,12 @@ async function startSession(sessionId) {
             saveContactsToSupabase(sessionId, contacts);
         }
 
-        // 2. Save Messages (History)
-        // Process in chunks to prevent memory issues
-        const chunkSize = 50;
+        // 3. Save Messages (History)
+        // Process in smaller chunks to prevent memory issues
+        console.log(`[${sessionId}] Processing ${messages.length} history messages...`);
+        const chunkSize = 25; // Reduced chunk size for better stability
+        let processedCount = 0;
+        
         for (let i = 0; i < messages.length; i += chunkSize) {
             const chunk = messages.slice(i, i + chunkSize);
             const processedMessages = await Promise.all(chunk.map(async (msg) => {
@@ -359,9 +438,14 @@ async function startSession(sessionId) {
             if (validMessages.length > 0) {
                 const { error } = await supabase
                     .from('whatsapp_messages')
-                    .upsert(validMessages, { onConflict: 'session_id,message_id', ignoreDuplicates: true });
+                    .upsert(validMessages, { onConflict: 'session_id,message_id', ignoreDuplicates: false });
                 
-                if (error) console.error(`[Supabase] Error saving history batch:`, error);
+                if (error) {
+                    console.error(`[${sessionId}] Error saving history batch:`, error);
+                } else {
+                    processedCount += validMessages.length;
+                    console.log(`[${sessionId}] Saved ${processedCount}/${messages.length} history messages...`);
+                }
 
                 // Update contact timestamps for history too
                 const contactsToUpdate = new Map();
@@ -394,11 +478,41 @@ async function startSession(sessionId) {
                 }
             }
         }
+        
+        console.log(`[${sessionId}] ✅ History sync completed! Processed ${processedCount} messages.`);
+        if (isLatest) {
+            console.log(`[${sessionId}] 🎉 All history has been synced!`);
+        }
+    });
+
+    // Add event listener for message updates (edits, deletions)
+    sock.ev.on('messages.update', async (updates) => {
+        console.log(`[${sessionId}] Received ${updates.length} message updates`);
+        for (const update of updates) {
+            if (update.key && update.update) {
+                // Update message in DB if needed
+                const { error } = await supabase
+                    .from('whatsapp_messages')
+                    .update({ 
+                        full_message_json: update,
+                        updated_at: new Date()
+                    })
+                    .eq('session_id', sessionId)
+                    .eq('message_id', update.key.id);
+                
+                if (error) console.error(`[Supabase] Error updating message:`, error);
+            }
+        }
+    });
+    
+    // Add event listener for message reactions
+    sock.ev.on('messages.reaction', async (reactions) => {
+        console.log(`[${sessionId}] Received ${reactions.length} reactions`);
+        // Reactions are usually embedded in messages.upsert, but we log them here
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        // Optimization: Handle messages in chunks to avoid blocking/timeouts during large history syncs
-        // console.log(`Received ${messages.length} messages (type: ${type})`);
+        console.log(`[${sessionId}] Received ${messages.length} messages (type: ${type})`);
         
         // Process in chunks of 50
         const chunkSize = 50;
@@ -418,7 +532,7 @@ async function startSession(sessionId) {
                 // Batch upsert to Supabase
                 const { error } = await supabase
                     .from('whatsapp_messages')
-                    .upsert(validMessages, { onConflict: 'session_id,message_id', ignoreDuplicates: true }); // ignoreDuplicates true for history to avoid overwriting with same data
+                    .upsert(validMessages, { onConflict: 'session_id,message_id', ignoreDuplicates: false }); // Changed to false to update existing messages
                 
                 if (error) console.error(`[Supabase] Error batch saving messages:`, error);
 
@@ -553,16 +667,22 @@ async function prepareMessageForSupabase(sessionId, msg, sock) {
     let attachmentFilename = null;
     let messageType = getContentType(realMessage);
 
-    // Only download media for recent messages (notify) or if we really want full history media (might be slow)
-    // Let's try to download for all, but catch errors.
+    // Download media for all supported message types
     try {
-        if (['imageMessage', 'videoMessage', 'documentMessage', 'audioMessage', 'stickerMessage'].includes(messageType)) {
+        const mediaTypes = {
+            'imageMessage': 'image',
+            'videoMessage': 'video',
+            'documentMessage': 'document',
+            'audioMessage': 'audio',
+            'stickerMessage': 'sticker',
+            'pttMessage': 'audio' // Voice messages
+        };
+        
+        if (mediaTypes[messageType]) {
+            console.log(`[${sessionId}] Downloading ${messageType} for message ${msg.key.id}`);
             
-            // Log download attempt for stickers
-            // if (messageType === 'stickerMessage') console.log('Attempting to download sticker:', msg.key.id);
-
             const buffer = await downloadMediaMessage(
-                { key: msg.key, message: realMessage }, // Use unwrapped message
+                { key: msg.key, message: realMessage },
                 'buffer',
                 { },
                 { 
@@ -570,49 +690,65 @@ async function prepareMessageForSupabase(sessionId, msg, sock) {
                     reuploadRequest: sock.updateMediaMessage
                 }
             ).catch((e) => {
-                // console.error(`Media download failed for ${messageType}:`, e.message);
+                console.error(`[${sessionId}] Media download failed for ${messageType}:`, e.message);
                 return null;
             }); 
             
             if (buffer) {
-                let ext = mime.extension(realMessage[messageType].mimetype);
+                let ext = mime.extension(realMessage[messageType]?.mimetype || 'application/octet-stream');
                 
-                // Better extension handling for documents
+                // Better extension handling
                 if (messageType === 'documentMessage') {
-                    const fileName = realMessage.documentMessage.fileName;
+                    const fileName = realMessage.documentMessage?.fileName;
                     if (fileName && fileName.includes('.')) {
                         ext = fileName.split('.').pop();
-                    } else if (!ext) {
-                        ext = 'bin';
                     }
-                } else if (messageType === 'audioMessage') {
-                     ext = 'ogg'; // WhatsApp audio is usually ogg/opus
+                } else if (messageType === 'audioMessage' || messageType === 'pttMessage') {
+                    ext = 'ogg'; // WhatsApp audio is usually ogg/opus
                 } else if (messageType === 'stickerMessage') {
-                     ext = 'webp';
+                    ext = 'webp';
+                } else if (messageType === 'imageMessage' && !ext) {
+                    ext = 'jpg';
+                } else if (messageType === 'videoMessage' && !ext) {
+                    ext = 'mp4';
                 }
                 
                 if (!ext) ext = 'bin';
 
                 attachmentFilename = `${msg.key.id}.${ext}`;
-                fs.writeFileSync(path.join(SHARED_MEDIA_DIR, attachmentFilename), buffer);
+                const filePath = path.join(SHARED_MEDIA_DIR, attachmentFilename);
+                fs.writeFileSync(filePath, buffer);
+                console.log(`[${sessionId}] Saved media to ${attachmentFilename} (${buffer.length} bytes)`);
             } else {
                 // FALLBACK: Try to save thumbnail if full download failed
                 const thumb = realMessage[messageType]?.jpegThumbnail;
                 if (thumb && Buffer.isBuffer(thumb)) {
                     attachmentFilename = `${msg.key.id}_thumb.jpg`;
                     fs.writeFileSync(path.join(SHARED_MEDIA_DIR, attachmentFilename), thumb);
+                    console.log(`[${sessionId}] Saved thumbnail for ${msg.key.id}`);
                 }
             }
         }
     } catch (e) {
-        // console.error('Error downloading media:', e);
+        console.error(`[${sessionId}] Error downloading media:`, e);
     }
 
     let contentText = '';
+    let quotedMessage = null;
+    
+    // Check for quoted/replied message
+    if (realMessage?.extendedTextMessage?.contextInfo?.quotedMessage) {
+        quotedMessage = realMessage.extendedTextMessage.contextInfo;
+    }
+    
     if (realMessage?.conversation) {
         contentText = realMessage.conversation;
     } else if (realMessage?.extendedTextMessage?.text) {
         contentText = realMessage.extendedTextMessage.text;
+        // Add quoted message indicator
+        if (quotedMessage) {
+            contentText = `[回覆] ${contentText}`;
+        }
     } else if (realMessage?.imageMessage?.caption) {
         contentText = realMessage.imageMessage.caption;
     } else if (realMessage?.videoMessage?.caption) {
@@ -623,8 +759,9 @@ async function prepareMessageForSupabase(sessionId, msg, sock) {
         // Handle protocol messages (e.g. history sync end) - usually skip but good to know
         return null;
     } else if (realMessage?.reactionMessage) {
-        // Don't save reactions as separate messages for now to avoid clutter
-        return null; 
+        // Save reactions as messages so we can display them
+        const reaction = realMessage.reactionMessage;
+        contentText = `${reaction.text || '❤️'} (回應訊息)`;
     } else {
         // Fallback: try to find any string in the message object recursively? 
         // Or just use the type.
