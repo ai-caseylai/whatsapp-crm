@@ -184,12 +184,24 @@
         // 登录
         async function login() {
             const password = document.getElementById('password').value;
+            if (!password) {
+                alert('请输入密码');
+                return;
+            }
+            
             try {
                 const res = await fetch('/api/admin/auth', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ password })
                 });
+                
+                // 检查响应类型
+                const contentType = res.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    throw new Error('服务器返回了非 JSON 响应，请检查服务器配置');
+                }
+                
                 const data = await res.json();
                 if (data.token) {
                     token = data.token;
@@ -197,10 +209,11 @@
                     document.getElementById('main-content').classList.remove('hidden');
                     init();
                 } else {
-                    alert('密码错误');
+                    alert('密码错误：' + (data.error || '未知错误'));
                 }
             } catch (e) {
-                alert('登录失败: ' + e.message);
+                console.error('登录错误:', e);
+                alert('登录失败: ' + e.message + '\n\n提示：请确认管理服务器正在运行');
             }
         }
 

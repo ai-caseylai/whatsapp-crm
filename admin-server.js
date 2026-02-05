@@ -10,6 +10,12 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin-secret-key';
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// 确保 API 响应都是 JSON
+app.use('/api', (req, res, next) => {
+    res.setHeader('Content-Type', 'application/json');
+    next();
+});
+
 // 简单的认证中间件
 const authenticate = (req, res, next) => {
     const token = req.headers['authorization'];
@@ -162,6 +168,8 @@ app.get('/health', (req, res) => {
 
 // 获取认证令牌（仅用于演示，生产环境应该更安全）
 app.post('/api/admin/auth', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    
     const { password } = req.body;
     if (password === ADMIN_SECRET) {
         res.json({ token: ADMIN_SECRET });
