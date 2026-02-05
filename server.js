@@ -1072,6 +1072,83 @@ app.post('/api/session/:id/logout', async (req, res) => {
     res.json({ success: true });
 });
 
+// Refresh LID contact names
+app.post('/api/session/:id/refresh-lid-contacts', async (req, res) => {
+    const sessionId = req.params.id;
+    const mem = sessions.get(sessionId);
+    
+    if (!mem || !mem.sock) {
+        return res.status(400).json({ error: '會話未連接' });
+    }
+    
+    try {
+        console.log(`[${sessionId}] 獲取 LID 聯絡人信息...`);
+        
+        // Get all LID contacts from database
+        const { data: lidContacts, error } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid, name, notify')
+            .eq('session_id', sessionId)
+            .like('jid', '%@lid');
+        
+        if (error) {
+            console.error(`[${sessionId}] 獲取 LID 聯絡人失敗:`, error);
+            return res.status(500).json({ error: error.message });
+        }
+        
+        console.log(`[${sessionId}] 找到 ${lidContacts?.length || 0} 個 LID 聯絡人`);
+        
+        // Try to fetch status/info for LID contacts
+        let updated = 0;
+        const contactsToUpdate = [];
+        
+        for (const contact of lidContacts || []) {
+            try {
+                // Extract phone number from LID
+                const phoneNumber = contact.jid.split('@')[0];
+                
+                // Try to get contact info (this might work for some contacts)
+                const jids = [`${phoneNumber}@s.whatsapp.net`];
+                const onWhatsAppResult = await mem.sock.onWhatsApp(...jids);
+                
+                if (onWhatsAppResult && onWhatsAppResult.length > 0) {
+                    const info = onWhatsAppResult[0];
+                    if (info.exists) {
+                        // Contact exists, update with any available info
+                        contactsToUpdate.push({
+                            session_id: sessionId,
+                            jid: contact.jid,
+                            name: contact.name || phoneNumber,
+                            notify: contact.notify || phoneNumber,
+                            updated_at: new Date()
+                        });
+                        updated++;
+                    }
+                }
+            } catch (e) {
+                // Skip individual errors
+                console.log(`[${sessionId}] 無法獲取 ${contact.jid} 的信息`);
+            }
+        }
+        
+        if (contactsToUpdate.length > 0) {
+            await supabase.from('whatsapp_contacts')
+                .upsert(contactsToUpdate, { onConflict: 'session_id,jid', ignoreDuplicates: false });
+        }
+        
+        console.log(`[${sessionId}] ✅ 已處理 ${updated} 個 LID 聯絡人`);
+        return res.json({ 
+            success: true, 
+            lidContactsFound: lidContacts?.length || 0,
+            contactsProcessed: updated,
+            message: `已處理 ${updated} 個 LID 聯絡人`
+        });
+    } catch (error) {
+        console.error(`[${sessionId}] 刷新 LID 聯絡人失敗:`, error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 // Refresh group names
 app.post('/api/session/:id/refresh-groups', async (req, res) => {
     const sessionId = req.params.id;
