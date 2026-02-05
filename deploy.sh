@@ -70,13 +70,22 @@ echo ""
 echo "🔄 正在重启服务..."
 pm2 restart whatsapp-bot --update-env
 
+# 检查是否需要重启管理服务和 Webhook
+if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+    if git diff ${OLD_VERSION}..${NEW_VERSION} --name-only 2>/dev/null | grep -qE "(admin-server\.js|webhook-server\.js)"; then
+        echo "🔄 检测到管理服务或 Webhook 更改，正在重启..."
+        pm2 restart whatsapp-admin --update-env 2>/dev/null || echo "   (管理服务未运行，跳过)"
+        pm2 restart whatsapp-webhook --update-env 2>/dev/null || echo "   (Webhook 服务未运行，跳过)"
+    fi
+fi
+
 # 等待服务启动
 sleep 3
 
 # 检查服务状态
 echo ""
 echo "📊 服务状态:"
-pm2 list whatsapp-bot
+pm2 list
 
 # 显示最新版本
 echo ""
