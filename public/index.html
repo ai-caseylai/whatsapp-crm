@@ -581,17 +581,28 @@
 
                 const html = messages
                     .filter(msg => {
-                        const m = msg.full_message_json || msg.message;
-                        if (!m) return false;
-                        if (m.protocolMessage || m.senderKeyDistributionMessage) return false;
+                        // 檢查消息結構
+                        const fullMsg = msg.full_message_json;
+                        const msgContent = fullMsg?.message || fullMsg;
+                        
+                        // 過濾掉協議消息和密鑰分發消息
+                        if (msgContent?.protocolMessage || msgContent?.senderKeyDistributionMessage) return false;
                         if (msg.message_type === 'associatedChildMessage') return false;
+                        
+                        // 保留所有其他消息
                         return true;
                     })
                     .map(msg => renderMessageBubble(msg))
                     .join('');
                 
-                // Only update if changed to avoid flicker (simple check length or hash?)
-                // For now just replace
+                console.log(`Loaded ${messages.length} messages, filtered to ${html ? 'some' : 'none'}`);
+                
+                // 如果沒有消息，顯示提示
+                if (!html || html.trim() === '') {
+                    messagesContainer.innerHTML = '<div class="text-center text-gray-400 mt-4">暫無訊息</div>';
+                    return;
+                }
+                
                 messagesContainer.innerHTML = html;
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
