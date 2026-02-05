@@ -960,6 +960,60 @@ app.post('/api/session/:id/restart', async (req, res) => {
     }
 });
 
+// Manually fetch chat history for a specific JID
+app.post('/api/session/:id/fetch-history/:jid', async (req, res) => {
+    const sessionId = req.params.id;
+    const jid = req.params.jid;
+    const mem = sessions.get(sessionId);
+    
+    if (!mem || !mem.sock) {
+        return res.status(400).json({ error: 'Session not connected' });
+    }
+    
+    try {
+        console.log(`[${sessionId}] Manually fetching history for ${jid}...`);
+        
+        // Fetch message history for this chat
+        const messages = await mem.sock.fetchMessageHistory(50, jid, undefined);
+        
+        console.log(`[${sessionId}] Fetched ${messages.length} messages from ${jid}`);
+        
+        // Process and save messages
+        if (messages && messages.length > 0) {
+            const processedMessages = await Promise.all(messages.map(async (msg) => {
+                return await prepareMessageForSupabase(sessionId, msg, mem.sock);
+            }));
+            
+            const validMessages = processedMessages.filter(m => m !== null);
+            
+            if (validMessages.length > 0) {
+                const { error } = await supabase
+                    .from('whatsapp_messages')
+                    .upsert(validMessages, { onConflict: 'session_id,message_id', ignoreDuplicates: false });
+                
+                if (error) {
+                    console.error(`[${sessionId}] Error saving fetched messages:`, error);
+                    return res.status(500).json({ error: error.message });
+                }
+                
+                console.log(`[${sessionId}] Successfully saved ${validMessages.length} messages for ${jid}`);
+                return res.json({ 
+                    success: true, 
+                    messagesFetched: messages.length,
+                    messagesSaved: validMessages.length 
+                });
+            } else {
+                return res.json({ success: true, messagesFetched: messages.length, messagesSaved: 0 });
+            }
+        } else {
+            return res.json({ success: true, message: 'No messages found', messagesFetched: 0 });
+        }
+    } catch (error) {
+        console.error(`[${sessionId}] Error fetching history for ${jid}:`, error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 // Get Contacts (Protected by Session ID only)
 app.get('/api/session/:id/contacts', async (req, res) => {
     // Also try to fetch contacts from Supabase first
