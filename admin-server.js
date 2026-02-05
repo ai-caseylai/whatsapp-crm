@@ -7,14 +7,17 @@ const app = express();
 const PORT = 9001;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin-secret-key';
 
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// 增加 JSON body 限制
+app.use(express.json({ limit: '10mb' }));
 
-// 确保 API 响应都是 JSON
+// API 路由优先（在 static 之前）
 app.use('/api', (req, res, next) => {
     res.setHeader('Content-Type', 'application/json');
     next();
 });
+
+// 静态文件服务
+app.use(express.static(path.join(__dirname, 'public')));
 
 // 简单的认证中间件
 const authenticate = (req, res, next) => {
