@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp 媒體畫廊</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .media-card {
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .media-card:hover {
+            transform: scale(1.05);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .emoji-text {
+            font-size: 2rem;
+            line-height: 1.5;
+        }
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+        }
+        .lightbox.active {
+            display: flex;
+        }
+        .lightbox img, .lightbox video {
+            max-width: 90%;
+            max-height: 90%;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-8">
+    <div class="max-w-7xl mx-auto">
+        <div class="bg-white rounded-2xl shadow-2xl p-8 mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">📸 WhatsApp 媒體畫廊</h1>
+            <p class="text-gray-600">所有圖片、視頻和 Emoji</p>
+        </div>
+
+        <!-- 過濾器 -->
+        <div class="bg-white rounded-2xl shadow-2xl p-6 mb-8">
+            <div class="flex flex-wrap gap-4">
+                <button onclick="filterMedia('all')" class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition" id="filter-all">
+                    全部
+                </button>
+                <button onclick="filterMedia('image')" class="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition" id="filter-image">
+                    🖼️ 圖片
+                </button>
+                <button onclick="filterMedia('video')" class="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition" id="filter-video">
+                    🎥 視頻
+                </button>
+                <button onclick="filterMedia('emoji')" class="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition" id="filter-emoji">
+                    😊 Emoji
+                </button>
+            </div>
+        </div>
+
+        <!-- 媒體網格 -->
+        <div id="media-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <!-- 媒體項目將在這裡動態加載 -->
+        </div>
+
+        <!-- 加載提示 -->
+        <div id="loading" class="text-center py-8">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
+            <p class="text-white mt-4">正在加載媒體...</p>
+        </div>
+    </div>
+
+    <!-- Lightbox -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+        <div id="lightbox-content"></div>
+        <button onclick="closeLightbox()" class="absolute top-8 right-8 text-white text-4xl hover:text-gray-300">&times;</button>
+    </div>
+
+    <script>
+        let allMedia = [];
+        let currentFilter = 'all';
+
+        async function loadMedia() {
+            try {
+                const response = await fetch('/api/media/list');
+                const data = await response.json();
+                allMedia = data.media;
+                renderMedia();
+                document.getElementById('loading').style.display = 'none';
+            } catch (error) {
+                console.error('加載媒體失敗:', error);
+                document.getElementById('loading').innerHTML = '<p class="text-white">加載失敗，請刷新頁面重試</p>';
+            }
+        }
+
+        function filterMedia(type) {
+            currentFilter = type;
+            
+            // 更新按鈕樣式
+            document.querySelectorAll('[id^="filter-"]').forEach(btn => {
+                btn.className = 'px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition';
+            });
+            document.getElementById('filter-' + type).className = 'px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition';
+            
+            renderMedia();
+        }
+
+        function renderMedia() {
+            const grid = document.getElementById('media-grid');
+            const filtered = currentFilter === 'all' 
+                ? allMedia 
+                : allMedia.filter(m => m.type === currentFilter);
+
+            grid.innerHTML = filtered.map(media => {
+                if (media.type === 'image') {
+                    return `
+                        <div class="media-card bg-white rounded-xl shadow-lg overflow-hidden cursor-pointer" 
+                             onclick="openLightbox('${media.path}', 'image')">
+                            <img src="${media.path}" alt="Image" class="w-full h-64 object-cover">
+                            <div class="p-4">
+                                <p class="text-sm text-gray-600 truncate">${media.chat_name}</p>
+                                <p class="text-xs text-gray-400">${new Date(media.timestamp).toLocaleString('zh-HK')}</p>
+                            </div>
+                        </div>
+                    `;
+                } else if (media.type === 'video') {
+                    return `
+                        <div class="media-card bg-white rounded-xl shadow-lg overflow-hidden cursor-pointer"
+                             onclick="openLightbox('${media.path}', 'video')">
+                            <video class="w-full h-64 object-cover" preload="metadata">
+                                <source src="${media.path}" type="video/mp4">
+                            </video>
+                            <div class="p-4">
+                                <p class="text-sm text-gray-600 truncate">${media.chat_name}</p>
+                                <p class="text-xs text-gray-400">${new Date(media.timestamp).toLocaleString('zh-HK')}</p>
+                            </div>
+                        </div>
+                    `;
+                } else if (media.type === 'emoji') {
+                    return `
+                        <div class="media-card bg-white rounded-xl shadow-lg p-8 text-center">
+                            <div class="emoji-text">${media.content}</div>
+                            <div class="mt-4">
+                                <p class="text-sm text-gray-600 truncate">${media.chat_name}</p>
+                                <p class="text-xs text-gray-400">${new Date(media.timestamp).toLocaleString('zh-HK')}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            }).join('');
+        }
+
+        function openLightbox(path, type) {
+            const lightbox = document.getElementById('lightbox');
+            const content = document.getElementById('lightbox-content');
+            
+            if (type === 'image') {
+                content.innerHTML = `<img src="${path}" alt="Image">`;
+            } else if (type === 'video') {
+                content.innerHTML = `<video controls autoplay><source src="${path}" type="video/mp4"></video>`;
+            }
+            
+            lightbox.classList.add('active');
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('active');
+        }
+
+        // 初始化
+        loadMedia();
+    </script>
+</body>
+</html>

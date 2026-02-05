@@ -164,6 +164,64 @@ app.get('/api/admin/system', authenticate, (req, res) => {
     });
 });
 
+// 获取媒体列表
+app.get('/api/media/list', (req, res) => {
+    const limit = parseInt(req.query.limit) || 50;
+    const mediaType = req.query.type; // image, video, emoji
+    
+    // 从数据库获取媒体消息
+    executeCommand(`cd /home/ubuntu/whatsapp-bot && node -e "
+const { createClient } = require('@supabase/supabase-js');
+require('dotenv').config();
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+async function getMedia() {
+    let query = supabase
+        .from('whatsapp_messages')
+        .select('message_id, chat_jid, sender_name, content_text, timestamp, media_type, media_path, full_message_json')
+        .not('media_type', 'is', null)
+        .order('timestamp', { ascending: false })
+        .limit(${limit});
+    
+    ${mediaType ? `query = query.eq('media_type', '${mediaType}');` : ''}
+    
+    const { data, error } = await query;
+    
+    if (error) {
+        console.error(JSON.stringify({ error: error.message }));
+        return;
+    }
+    
+    const media = data.map(msg => ({
+        id: msg.message_id,
+        chat_jid: msg.chat_jid,
+        chat_name: msg.full_message_json?.key?.remoteJid || 'Unknown',
+        sender: msg.sender_name || 'Unknown',
+        type: msg.media_type,
+        path: msg.media_path,
+        content: msg.content_text,
+        timestamp: msg.timestamp,
+        available: !!msg.media_path
+    }));
+    
+    console.log(JSON.stringify({ media }));
+}
+
+getMedia();
+"`, (result) => {
+        if (result.error) {
+            return res.status(500).json({ error: result.error });
+        }
+        try {
+            const output = result.stdout.trim().split('\n').pop();
+            const data = JSON.parse(output);
+            res.json(data);
+        } catch (e) {
+            res.status(500).json({ error: 'Failed to parse media data', details: result.stdout });
+        }
+    });
+});
+
 // 健康检查
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'WhatsApp CRM Admin Server' });

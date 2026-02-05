@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp 媒體畫廊</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .media-card {
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .media-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+        }
+        .emoji-display {
+            font-size: 3rem;
+            line-height: 1;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- 標題 -->
+        <div class="bg-white rounded-2xl shadow-2xl p-8 mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">📸 WhatsApp 媒體畫廊</h1>
+            <p class="text-gray-600">查看所有圖片、視頻和 Emoji</p>
+            <div class="mt-4 flex gap-4">
+                <a href="/admin.html" class="text-blue-600 hover:text-blue-800">← 返回管理面板</a>
+                <a href="/" class="text-blue-600 hover:text-blue-800">返回主頁</a>
+            </div>
+        </div>
+
+        <!-- 統計信息 -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <div class="text-3xl font-bold text-blue-600" id="total-count">0</div>
+                <div class="text-gray-600">總媒體數</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <div class="text-3xl font-bold text-green-600" id="image-count">0</div>
+                <div class="text-gray-600">圖片</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <div class="text-3xl font-bold text-purple-600" id="video-count">0</div>
+                <div class="text-gray-600">視頻</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <div class="text-3xl font-bold text-yellow-600" id="emoji-count">0</div>
+                <div class="text-gray-600">Emoji</div>
+            </div>
+        </div>
+
+        <!-- 過濾器 -->
+        <div class="bg-white rounded-2xl shadow-2xl p-6 mb-8">
+            <div class="flex flex-wrap gap-4">
+                <button onclick="filterMedia('all')" class="filter-btn px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold" data-filter="all">
+                    🌐 全部
+                </button>
+                <button onclick="filterMedia('image')" class="filter-btn px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold" data-filter="image">
+                    🖼️ 圖片
+                </button>
+                <button onclick="filterMedia('video')" class="filter-btn px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold" data-filter="video">
+                    🎥 視頻
+                </button>
+                <button onclick="filterMedia('emoji')" class="filter-btn px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold" data-filter="emoji">
+                    😊 Emoji
+                </button>
+            </div>
+        </div>
+
+        <!-- 媒體網格 -->
+        <div id="media-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
+            <!-- 媒體項目將在這裡動態加載 -->
+        </div>
+
+        <!-- 加載提示 -->
+        <div id="loading" class="text-center py-12">
+            <div class="inline-block animate-spin rounded-full h-16 w-16 border-4 border-white border-t-transparent"></div>
+            <p class="text-white mt-4 text-lg">正在加載媒體...</p>
+        </div>
+
+        <!-- 錯誤提示 -->
+        <div id="error" class="hidden bg-red-500 text-white rounded-xl p-6 text-center">
+            <p class="text-lg font-semibold">加載失敗</p>
+            <p class="mt-2">請檢查網絡連接或刷新頁面重試</p>
+        </div>
+    </div>
+
+    <script>
+        let allMedia = [];
+        let currentFilter = 'all';
+
+        async function loadMedia() {
+            try {
+                // 從後端 API 獲取媒體列表
+                const response = await fetch('/api/media/list?limit=100');
+                
+                if (!response.ok) {
+                    throw new Error('API 請求失敗');
+                }
+                
+                const data = await response.json();
+                allMedia = data.media || [];
+                
+                // 更新統計
+                updateStats();
+                
+                // 渲染媒體
+                renderMedia();
+                
+                // 隱藏加載提示
+                document.getElementById('loading').style.display = 'none';
+                
+            } catch (error) {
+                console.error('加載媒體失敗:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').classList.remove('hidden');
+            }
+        }
+
+        function updateStats() {
+            const imageCount = allMedia.filter(m => m.type === 'image').length;
+            const videoCount = allMedia.filter(m => m.type === 'video').length;
+            const emojiCount = allMedia.filter(m => 
+                m.content && /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F1E0}-\u{1F1FF}]/u.test(m.content)
+            ).length;
+            
+            document.getElementById('total-count').textContent = allMedia.length;
+            document.getElementById('image-count').textContent = imageCount;
+            document.getElementById('video-count').textContent = videoCount;
+            document.getElementById('emoji-count').textContent = emojiCount;
+        }
+
+        function filterMedia(type) {
+            currentFilter = type;
+            
+            // 更新按鈕樣式
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                if (btn.dataset.filter === type) {
+                    btn.className = 'filter-btn px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition font-semibold';
+                } else {
+                    btn.className = 'filter-btn px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold';
+                }
+            });
+            
+            renderMedia();
+        }
+
+        function renderMedia() {
+            const grid = document.getElementById('media-grid');
+            
+            let filtered = allMedia;
+            if (currentFilter === 'image') {
+                filtered = allMedia.filter(m => m.type === 'image');
+            } else if (currentFilter === 'video') {
+                filtered = allMedia.filter(m => m.type === 'video');
+            } else if (currentFilter === 'emoji') {
+                filtered = allMedia.filter(m => 
+                    m.content && /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F1E0}-\u{1F1FF}]/u.test(m.content)
+                );
+            }
+
+            if (filtered.length === 0) {
+                grid.innerHTML = '<div class="col-span-full text-center text-white text-lg py-12">沒有找到媒體內容</div>';
+                return;
+            }
+
+            grid.innerHTML = filtered.map(media => {
+                const date = new Date(media.timestamp).toLocaleString('zh-HK', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                if (media.type === 'image' && media.path) {
+                    return `
+                        <div class="media-card bg-white rounded-xl shadow-lg overflow-hidden">
+                            <div class="h-64 bg-gray-100 flex items-center justify-center">
+                                <img src="${media.path}" alt="Image" class="w-full h-full object-cover" 
+                                     onerror="this.parentElement.innerHTML='<div class=\\'text-gray-400\\'>圖片加載失敗</div>'">
+                            </div>
+                            <div class="p-4">
+                                <p class="text-sm font-semibold text-gray-800 truncate">${escapeHtml(media.sender)}</p>
+                                <p class="text-xs text-gray-500 truncate">${escapeHtml(media.chat_name)}</p>
+                                <p class="text-xs text-gray-400 mt-2">${date}</p>
+                            </div>
+                        </div>
+                    `;
+                } else if (media.type === 'video' && media.path) {
+                    return `
+                        <div class="media-card bg-white rounded-xl shadow-lg overflow-hidden">
+                            <div class="h-64 bg-gray-100">
+                                <video class="w-full h-full object-cover" controls preload="metadata">
+                                    <source src="${media.path}" type="video/mp4">
+                                    視頻格式不支持
+                                </video>
+                            </div>
+                            <div class="p-4">
+                                <p class="text-sm font-semibold text-gray-800 truncate">${escapeHtml(media.sender)}</p>
+                                <p class="text-xs text-gray-500 truncate">${escapeHtml(media.chat_name)}</p>
+                                <p class="text-xs text-gray-400 mt-2">${date}</p>
+                            </div>
+                        </div>
+                    `;
+                } else if (media.content) {
+                    // Emoji 或文本消息
+                    return `
+                        <div class="media-card bg-white rounded-xl shadow-lg p-6">
+                            <div class="emoji-display text-center mb-4">
+                                ${escapeHtml(media.content)}
+                            </div>
+                            <div class="border-t pt-4">
+                                <p class="text-sm font-semibold text-gray-800 truncate">${escapeHtml(media.sender)}</p>
+                                <p class="text-xs text-gray-500 truncate">${escapeHtml(media.chat_name)}</p>
+                                <p class="text-xs text-gray-400 mt-2">${date}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+                return '';
+            }).join('');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        // 初始化
+        loadMedia();
+    </script>
+</body>
+</html>
