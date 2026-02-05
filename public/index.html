@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .chat-message { max-width: 80%; }
+        .message-in { align-self: flex-start; background-color: #ffffff; }
+        .message-out { align-self: flex-end; background-color: #dcf8c6; }
+        .scrollbar-w-2::-webkit-scrollbar { width: 0.5rem; height: 0.5rem; }
+        .scrollbar-thumb-rounded::-webkit-scrollbar-thumb { border-radius: 0.25rem; background-color: #cbd5e0; }
+        .scrollbar-track-gray-lighter::-webkit-scrollbar-track { background-color: #f7fafc; }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col">
+    <!-- Navbar -->
+    <div class="bg-[#00a884] text-white p-4 shadow-md flex justify-between items-center z-10">
+        <div class="flex items-center gap-4">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
+                WhatsApp CRM
+            </h1>
+            <!-- Navigation Links: Always Visible -->
+            <nav class="flex space-x-2 ml-4 text-sm font-medium">
+                <a href="#" onclick="switchTab('chat')" id="nav-chat" class="px-3 py-2 rounded bg-[#008f6f] text-white flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                    聊天室
+                </a>
+                <a href="#" onclick="switchTab('calendar')" id="nav-calendar" class="px-3 py-2 rounded hover:bg-[#008f6f]/50 transition flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    發送日曆
+                </a>
+            </nav>
+        </div>
+        <div class="flex items-center space-x-4">
+            <div id="user-identity" class="flex items-center space-x-2 hidden">
+                <span class="text-sm opacity-90">已登入:</span>
+                <span id="user-name" class="font-bold bg-[#008f6f] px-3 py-1 rounded-full text-sm shadow-sm"></span>
+            </div>
+            <span id="status-badge" class="px-2 py-1 rounded bg-gray-500 text-sm">檢查中...</span>
+            <button onclick="resync()" class="bg-yellow-500 hover:bg-yellow-600 px-3 py-1 rounded text-sm transition shadow-sm text-white" title="清除資料並重新掃描以同步完整歷史">強制同步</button>
+            <button onclick="openMarketing()" class="bg-[#008f6f] hover:bg-[#007f5f] px-3 py-1 rounded text-sm transition shadow-sm font-bold flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"></path></svg>
+                群發行銷
+            </button>
+            <button onclick="logout()" class="bg-red-500 hover:bg-red-600 px-3 py-1 rounded text-sm transition shadow-sm">登出</button>
+        </div>
+    </div>
+
+    <!-- Marketing Modal -->
+    <div id="marketing-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center">
+        <div class="bg-white w-[900px] h-[600px] rounded-xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="bg-[#00a884] text-white p-4 flex justify-between items-center">
+                <h2 class="text-xl font-bold flex items-center gap-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"></path></svg>
+                    WhatsApp 行銷群發助手
+                </h2>
+                <button onclick="closeMarketing()" class="hover:bg-[#008f6f] p-1 rounded"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            </div>
+            
+            <div class="flex-1 flex overflow-hidden">
+                <!-- Left: Contact Selector -->
+                <div class="w-1/3 border-r border-gray-200 flex flex-col bg-gray-50">
+                    <div class="p-3 border-b border-gray-200">
+                        <input type="text" id="mkt-search" onkeyup="filterMarketingContacts()" placeholder="搜尋聯絡人 (或輸入電話號碼)..." class="w-full px-3 py-2 border rounded-lg text-sm mb-2">
+                        <div class="flex justify-between items-center text-xs text-gray-600">
+                            <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" onchange="toggleAllMarketing(this)"> 全選顯示</label>
+                            <span id="selected-count">已選: 0</span>
+                        </div>
+                        <!-- Add manual number input for self/others -->
+                        <div class="mt-2 flex gap-2">
+                            <input type="text" id="manual-number" placeholder="手動輸入號碼 (例如 85297188675)" class="flex-1 px-2 py-1 border rounded text-xs">
+                            <button onclick="addManualContact()" class="bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-xs">新增</button>
+                        </div>
+                    </div>
+                    <div id="mkt-contacts-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+                        <!-- Contacts rendered here -->
+                    </div>
+                </div>
+
+                <!-- Right: Compose -->
+                <div class="w-2/3 p-6 flex flex-col bg-white">
+                    <div class="mb-4">
+                        <label class="block text-sm font-bold text-gray-700 mb-2">訊息內容</label>
+                        <textarea id="mkt-text" rows="6" class="w-full border rounded-lg p-3 focus:ring-2 focus:ring-[#00a884] focus:outline-none" placeholder="輸入您的推廣訊息..."></textarea>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="block text-sm font-bold text-gray-700 mb-2">附件 (圖片/影片/文件)</label>
+                        <input type="file" id="mkt-file" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-[#e6fffa] file:text-[#00a884] hover:file:bg-[#b2f5ea]"/>
+                        <p class="text-xs text-gray-500 mt-1">支援 jpg, png, mp4, pdf, doc 等格式</p>
+                    </div>
+
+                    <div class="mt-auto border-t pt-4">
+                        <div class="flex justify-between items-center mb-4">
+                            <div class="text-sm">
+                                <span class="font-bold text-gray-700">今日額度:</span>
+                                <span id="daily-limit-text" class="text-green-600 font-bold ml-1">載入中...</span>
+                            </div>
+                            <div class="text-xs text-gray-400">
+                                系統限制: 50 則/天
+                            </div>
+                        </div>
+                        
+                        <button onclick="sendBroadcast()" id="btn-broadcast" class="w-full bg-[#00a884] hover:bg-[#008f6f] text-white font-bold py-3 rounded-lg shadow-lg transition flex justify-center items-center gap-2">
+                            <span>🚀 發送廣播</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-chat" class="flex-1 flex overflow-hidden">
+        <!-- Sidebar: Contacts -->
+        <div class="w-1/3 md:w-1/4 bg-white border-r border-gray-200 flex flex-col z-0">
+            <div class="p-4 border-b border-gray-200 bg-gray-50">
+                <input type="text" id="search-input" placeholder="搜尋聯絡人..." onkeyup="filterContacts()" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+            </div>
+            <div id="contacts-list" class="flex-1 overflow-y-auto scrollbar-w-2 scrollbar-thumb-rounded">
+                <div class="p-4 text-center text-gray-500">載入中...</div>
+            </div>
+        </div>
+
+        <!-- Main: Chat -->
+        <div class="w-2/3 md:w-3/4 flex flex-col bg-[#e5ddd5] relative">
+            <!-- Chat Header -->
+            <div id="chat-header" class="p-3 bg-gray-200 border-b border-gray-300 hidden flex items-center shadow-sm">
+                <div class="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center text-white font-bold mr-3" id="header-avatar">?</div>
+                <div>
+                    <h2 id="current-contact-name" class="font-bold text-gray-800"></h2>
+                    <p id="current-contact-id" class="text-xs text-gray-600 font-mono"></p>
+                </div>
+            </div>
+
+            <!-- QR Container -->
+            <div id="qr-container" class="absolute inset-0 bg-[#e5ddd5] z-20 flex flex-col items-center justify-center hidden">
+                <div class="bg-white p-8 rounded-xl shadow-2xl text-center max-w-md w-full mx-4">
+                    <h3 class="text-2xl font-bold mb-2 text-gray-800">連結 WhatsApp</h3>
+                    <p class="text-gray-600 mb-6 text-sm">請使用手機 WhatsApp 掃描下方 QR Code</p>
+                    
+                    <div class="bg-gray-100 p-2 rounded-lg inline-block mb-4 relative min-h-[250px] flex items-center justify-center w-full">
+                        <img id="qr-code" src="" alt="QR Code" class="w-64 h-64 object-contain hidden" />
+                        <div id="qr-loading" class="absolute inset-0 flex flex-col items-center justify-center">
+                            <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-4"></div>
+                            <p id="qr-loading-text" class="text-gray-500 text-sm">載入中...</p>
+                        </div>
+                    </div>
+
+                    <div class="text-left text-sm text-gray-600 space-y-2">
+                        <p>1. 開啟手機上的 WhatsApp</p>
+                        <p>2. 點擊 <strong>設定</strong> > <strong>連結裝置</strong></p>
+                        <p>3. 點擊 <strong>連結裝置</strong> 並掃描此碼</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messages Area -->
+            <div id="messages-container" class="flex-1 overflow-y-auto p-4 flex flex-col space-y-2 scrollbar-w-2 scrollbar-thumb-rounded hidden"></div>
+            
+            <!-- Welcome Screen -->
+            <div id="welcome-screen" class="flex-1 flex items-center justify-center text-gray-500 flex-col">
+                <svg class="w-24 h-24 mb-4 text-gray-300" fill="currentColor" viewBox="0 0 24 24"><path d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2ZM20 16H6L4 18V4H20V16Z"/></svg>
+                <p class="text-lg">請選擇一個聯絡人查看對話</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Calendar View (Hidden by default) -->
+    <div id="view-calendar" class="flex-1 flex flex-col hidden bg-white p-6 overflow-y-auto">
+        <h2 class="text-2xl font-bold mb-6 text-gray-800">發送日曆</h2>
+        <div class="grid grid-cols-1 md:grid-cols-7 gap-4">
+            <!-- Calendar Grid will be rendered here -->
+            <div class="md:col-span-5 bg-white rounded-xl shadow border border-gray-200 p-4">
+                <div class="flex justify-between items-center mb-4">
+                    <button onclick="changeMonth(-1)" class="p-2 hover:bg-gray-100 rounded">&lt;</button>
+                    <h3 id="cal-month-year" class="text-lg font-bold"></h3>
+                    <button onclick="changeMonth(1)" class="p-2 hover:bg-gray-100 rounded">&gt;</button>
+                </div>
+                <div class="grid grid-cols-7 gap-1 text-center text-sm text-gray-500 mb-2">
+                    <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+                </div>
+                <div id="calendar-grid" class="grid grid-cols-7 gap-1 text-sm"></div>
+            </div>
+            
+            <!-- Daily Details -->
+            <div class="md:col-span-2 bg-gray-50 rounded-xl p-4 border border-gray-200">
+                <h3 class="font-bold text-gray-800 mb-2" id="selected-date-title">選擇日期</h3>
+                <div id="selected-date-stats" class="space-y-3">
+                    <p class="text-gray-500 text-sm">請點擊左側日曆查看詳細數據</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Tab Switching ---
+        function switchTab(tab) {
+            const views = ['chat', 'calendar'];
+            views.forEach(v => {
+                document.getElementById(`view-${v}`).classList.add('hidden');
+                document.getElementById(`nav-${v}`).classList.remove('bg-[#008f6f]', 'text-white');
+                document.getElementById(`nav-${v}`).classList.add('hover:bg-[#008f6f]/50');
+            });
+            
+            document.getElementById(`view-${tab}`).classList.remove('hidden');
+            const activeNav = document.getElementById(`nav-${tab}`);
+            activeNav.classList.add('bg-[#008f6f]', 'text-white');
+            activeNav.classList.remove('hover:bg-[#008f6f]/50');
+            
+            if (tab === 'calendar') {
+                renderCalendar();
+            }
+        }
+
+        // --- Calendar Logic ---
+        let currentMonth = new Date();
+        let calendarStats = {};
+
+        async function fetchCalendarStats(year, month) {
+            try {
+                // Fetch stats for the whole month
+                const start = new Date(year, month, 1).toISOString();
+                const end = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
+                
+                // We need a backend API for this range, currently we can reuse daily-stats endpoint slightly modified
+                // Or just fetch all 'from_me' messages in range and aggregate locally for now
+                // Ideally backend should provide aggregation. Let's create a new endpoint later.
+                // For now, let's mock or simple fetch:
+                
+                const res = await fetch(`/api/session/${currentSessionId}/calendar-stats?start=${start}&end=${end}`);
+                if (res.ok) {
+                    calendarStats = await res.json();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function renderCalendar() {
+            const year = currentMonth.getFullYear();
+            const month = currentMonth.getMonth();
+            
+            document.getElementById('cal-month-year').textContent = `${year}年 ${month + 1}月`;
+            
+            // Fetch data
+            await fetchCalendarStats(year, month);
+
+            const firstDay = new Date(year, month, 1);
+            const lastDay = new Date(year, month + 1, 0);
+            const daysInMonth = lastDay.getDate();
+            const startingDay = firstDay.getDay(); // 0 is Sunday
+            
+            const grid = document.getElementById('calendar-grid');
+            grid.innerHTML = '';
+
+            // Empty cells for previous month
+            for (let i = 0; i < startingDay; i++) {
+                grid.innerHTML += '<div class="h-24 bg-gray-50 border border-gray-100"></div>';
+            }
+
+            // Days
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const stat = calendarStats[dateStr] || { sent: 0 };
+                const isToday = new Date().toDateString() === new Date(year, month, day).toDateString();
+                
+                let colorClass = 'bg-white';
+                if (stat.sent > 0) colorClass = 'bg-green-50';
+                if (stat.sent >= 50) colorClass = 'bg-red-50';
+                if (isToday) colorClass = 'ring-2 ring-purple-500';
+
+                grid.innerHTML += `
+                    <div onclick="selectDate('${dateStr}')" class="h-24 ${colorClass} border border-gray-200 p-2 cursor-pointer hover:bg-gray-100 transition relative">
+                        <div class="font-bold text-gray-700">${day}</div>
+                        ${stat.sent > 0 ? `<div class="mt-2 text-xs text-green-600 font-semibold">已發: ${stat.sent}</div>` : ''}
+                        ${stat.sent >= 50 ? '<div class="absolute bottom-1 right-1 text-red-500 text-[10px]">已滿</div>' : ''}
+                    </div>
+                `;
+            }
+        }
+
+        function changeMonth(delta) {
+            currentMonth.setMonth(currentMonth.getMonth() + delta);
+            renderCalendar();
+        }
+
+        function selectDate(dateStr) {
+            document.getElementById('selected-date-title').textContent = dateStr;
+            const stat = calendarStats[dateStr] || { sent: 0 };
+            
+            document.getElementById('selected-date-stats').innerHTML = `
+                <div class="flex justify-between items-center p-3 bg-white rounded shadow-sm">
+                    <span class="text-gray-600">已發送訊息</span>
+                    <span class="text-xl font-bold text-green-600">${stat.sent}</span>
+                </div>
+                <div class="flex justify-between items-center p-3 bg-white rounded shadow-sm">
+                    <span class="text-gray-600">剩餘額度</span>
+                    <span class="text-xl font-bold ${50 - stat.sent < 0 ? 'text-red-500' : 'text-blue-500'}">${Math.max(0, 50 - stat.sent)}</span>
+                </div>
+                <div class="mt-4">
+                    <h4 class="font-bold text-gray-700 text-sm mb-2">發送紀錄 (Top 5)</h4>
+                    <div id="date-logs" class="text-xs text-gray-500 space-y-1">
+                        載入中...
+                    </div>
+                </div>
+            `;
+            
+            // Load logs for that date
+            fetch(`/api/session/${currentSessionId}/logs?date=${dateStr}`).then(res => res.json()).then(logs => {
+                const logsContainer = document.getElementById('date-logs');
+                if (logs.length === 0) {
+                    logsContainer.innerHTML = '無發送紀錄';
+                    return;
+                }
+                logsContainer.innerHTML = logs.map(l => `
+                    <div class="flex justify-between border-b border-gray-100 pb-1">
+                        <span class="truncate w-2/3">${l.push_name || l.remote_jid.split('@')[0]}</span>
+                        <span>${new Date(l.created_at).toLocaleTimeString('zh-HK')}</span>
+                    </div>
+                `).join('');
+            });
+        }
+
+        // Generate or retrieve UUID for this browser session
+        function getSessionId() {
+            let id = localStorage.getItem('wa_crm_session_id');
+            if (!id) {
+                // Generate simple UUID
+                id = 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+                localStorage.setItem('wa_crm_session_id', id);
+            }
+            return id;
+        }
+
+        const currentSessionId = getSessionId();
+        let currentChatId = null;
+        let allContacts = [];
+        let statusPollInterval = null;
+
+        console.log('Using Session ID:', currentSessionId);
+
+        // --- Core Functions ---
+
+        async function startSession() {
+             try {
+                 await fetch(`/api/session/${currentSessionId}/start`, { method: 'POST' });
+                 checkStatus();
+             } catch(e) { console.error(e); }
+        }
+
+        async function checkStatus() {
+            try {
+                const res = await fetch(`/api/session/${currentSessionId}/status`);
+                const data = await res.json();
+                const badge = document.getElementById('status-badge');
+                const qrContainer = document.getElementById('qr-container');
+                const userIdentity = document.getElementById('user-identity');
+                const userName = document.getElementById('user-name');
+
+                // Update User Info if available
+                if (data.user) {
+                    // Prefer pushName (user set name), fallback to name, then notify, then ID
+                    const name = data.user.pushName || data.user.name || data.user.notify || data.user.id.split(':')[0];
+                    userName.textContent = name;
+                    userIdentity.classList.remove('hidden');
+                } else {
+                    userIdentity.classList.add('hidden');
+                }
+
+                if (data.status === 'connected') {
+                    badge.textContent = '已連線';
+                    badge.className = 'px-2 py-1 rounded bg-[#25D366] text-white text-sm transition font-semibold shadow-sm';
+                    qrContainer.classList.add('hidden');
+                    loadContacts(); // Load contacts when connected
+                    
+                    // Trigger ensure self
+                    fetch(`/api/session/${currentSessionId}/ensure-self`, { method: 'POST' }).catch(console.error);
+
+                    // Show user info
+                    if (data.userInfo) {
+                        const name = data.userInfo.name || data.userInfo.id.split(':')[0];
+                        document.getElementById('user-name').textContent = name;
+                        document.getElementById('user-identity').classList.remove('hidden');
+                        
+                        // Also try to manually add self to contact list in frontend if not present
+                        const selfJid = data.selfJid || (data.userInfo.id.split(':')[0] + '@s.whatsapp.net');
+                        // We do this inside loadContacts logic usually, but let's store it
+                        window.currentUserJid = selfJid;
+                    }
+                } else if (data.status === 'qr' && data.qr) {
+                    badge.textContent = '掃描中';
+                    badge.className = 'px-2 py-1 rounded bg-yellow-500 text-white text-sm transition';
+                    qrContainer.classList.remove('hidden');
+                    document.getElementById('qr-code').src = data.qr;
+                    document.getElementById('qr-code').classList.remove('hidden');
+                    document.getElementById('qr-loading').classList.add('hidden');
+                } else if (data.status === 'initializing') {
+                    badge.textContent = '啟動中...';
+                    badge.className = 'px-2 py-1 rounded bg-[#00a884] text-white text-sm transition';
+                    qrContainer.classList.remove('hidden');
+                    document.getElementById('qr-code').classList.add('hidden');
+                    document.getElementById('qr-loading').classList.remove('hidden');
+                    document.getElementById('qr-loading-text').textContent = '正在產生 QR Code...';
+                } else {
+                    badge.textContent = data.status === 'stopped' ? '未啟動' : (data.status || '未連線');
+                    badge.className = 'px-2 py-1 rounded bg-red-500 text-white text-sm transition';
+                    
+                    qrContainer.classList.remove('hidden');
+                    document.getElementById('qr-code').classList.add('hidden');
+                    document.getElementById('qr-loading').classList.remove('hidden');
+                    
+                    if (data.status === 'stopped' || data.status === 'logged_out') {
+                        // Auto start if stopped
+                        document.getElementById('qr-loading-text').textContent = '正在啟動連線...';
+                        startSession();
+                    } else {
+                        document.getElementById('qr-loading-text').textContent = '連線中...';
+                    }
+                }
+            } catch (e) { console.error(e); }
+
+            // Poll for new messages if chat is open
+            if (currentChatId && !document.getElementById('messages-container').classList.contains('hidden')) {
+                 refreshMessages(currentChatId);
+            }
+        }
+
+        async function logout() {
+            if(confirm('確定要登出嗎？這將會清除此瀏覽器的連線紀錄。')) {
+                await fetch(`/api/session/${currentSessionId}/logout`, { method: 'POST' });
+                localStorage.removeItem('wa_crm_session_id'); 
+                location.reload();
+            }
+        }
+
+        async function resync() {
+            if(confirm('強制同步將會登出並需要您重新掃描 QR Code。\n\n這通常能解決「缺訊息」或「缺群組」的問題。\n\n確定要繼續嗎？')) {
+                // Same as logout but with different intent message
+                await fetch(`/api/session/${currentSessionId}/logout`, { method: 'POST' });
+                localStorage.removeItem('wa_crm_session_id'); 
+                location.reload();
+            }
+        }
+
+        async function loadContacts() {
+            try {
+                const res = await fetch(`/api/session/${currentSessionId}/contacts`);
+                const data = await res.json();
+                
+                if (data.error) {
+                    console.error('Error loading contacts:', data.error);
+                    return;
+                }
+                
+                // Process and Init
+                initContacts(data);
+
+            } catch (e) {
+                console.error('Failed to load contacts:', e);
+                document.getElementById('contacts-list').innerHTML = '<div class="p-4 text-center text-red-500 text-sm">載入失敗</div>';
+            }
+        }
+
+        function initContacts(data) {
+            // 1. Filter invalid/broadcast
+            let valid = (Array.isArray(data) ? data : []).filter(c => {
+                const id = c.jid || c.id;
+                return id && !id.includes('status@broadcast');
+            });
+
+            // 2. Inject Self
+            if (window.currentUserJid) {
+                const hasSelf = valid.some(c => c.jid === window.currentUserJid || c.id === window.currentUserJid);
+                if (!hasSelf) {
+                    valid.unshift({
+                        jid: window.currentUserJid,
+                        name: 'Note to Self (自己)',
+                        notify: 'You',
+                        updated_at: new Date().toISOString()
+                    });
+                }
+            }
+
+            // 3. Sort (Latest updated_at first)
+            valid.sort((a, b) => {
+                const timeA = a.updated_at || '';
+                const timeB = b.updated_at || '';
+                return timeB.localeCompare(timeA);
+            });
+
+            // 4. Save to global
+            allContacts = valid;
+
+            // 5. Initial Render
+            filterContacts();
+        }
+
+        function filterContacts() {
+            const query = document.getElementById('search-input').value.toLowerCase();
+            
+            // Handle empty contacts
+            if (allContacts.length === 0) {
+                 renderContactsList([]);
+                 return;
+            }
+
+            const filtered = allContacts.filter(c => {
+                const id = c.jid || c.id || '';
+                const name = c.name || '';
+                const notify = c.notify || '';
+                return name.toLowerCase().includes(query) || 
+                       notify.toLowerCase().includes(query) ||
+                       id.includes(query);
+            });
+            renderContactsList(filtered);
+        }
+
+        function renderContactsList(contacts) {
+            const list = document.getElementById('contacts-list');
+            
+            if (contacts.length === 0) {
+                 list.innerHTML = '<div class="p-4 text-center text-gray-400 text-sm">暫無聯絡人<br>請等待同步</div>';
+                 return;
+            }
+
+            list.innerHTML = contacts.map(c => {
+                const id = c.jid || c.id; 
+                if (!id) return '';
+                
+                const isGroup = id.endsWith('@g.us');
+                // Improve display ID logic
+                const displayId = isGroup ? '群組 Group' : id.split('@')[0];
+                const name = c.name || c.notify || (isGroup ? "未命名群組" : displayId); 
+                
+                return `
+                <div onclick="loadChat('${id}', '${name.replace(/'/g, "\\'")}')" 
+                     class="p-3 border-b border-gray-100 hover:bg-gray-100 cursor-pointer transition flex items-center group">
+                    <div class="w-12 h-12 rounded-full ${isGroup ? 'bg-indigo-400' : 'bg-gray-300'} flex items-center justify-center mr-3 text-white font-bold shrink-0">
+                        ${name[0].toUpperCase()}
+                    </div>
+                    <div class="overflow-hidden min-w-0">
+                        <div class="font-semibold text-gray-800 truncate">${name}</div>
+                        <div class="text-xs text-gray-500 truncate font-mono">${displayId}</div>
+                    </div>
+                </div>
+            `;
+            }).join('');
+        }
+
+        async function loadChat(jid, name) {
+            currentChatId = jid;
+            document.getElementById('welcome-screen').classList.add('hidden');
+            document.getElementById('qr-container').classList.add('hidden');
+            document.getElementById('chat-header').classList.remove('hidden');
+            const messagesContainer = document.getElementById('messages-container');
+            messagesContainer.classList.remove('hidden');
+            
+            document.getElementById('current-contact-name').textContent = name;
+            document.getElementById('current-contact-id').textContent = jid.endsWith('@g.us') ? '群組 Group' : jid.replace('@s.whatsapp.net', '');
+            document.getElementById('header-avatar').textContent = name[0].toUpperCase();
+            document.getElementById('header-avatar').className = `w-10 h-10 rounded-full flex items-center justify-center text-white font-bold mr-3 ${jid.endsWith('@g.us') ? 'bg-indigo-400' : 'bg-gray-400'}`;
+
+            messagesContainer.innerHTML = '<div class="text-center text-gray-500 mt-4">載入訊息中...</div>';
+
+            await refreshMessages(jid);
+        }
+        
+        async function refreshMessages(jid) {
+            if (currentChatId !== jid) return;
+            const messagesContainer = document.getElementById('messages-container');
+            
+            try {
+                const res = await fetch(`/api/session/${currentSessionId}/messages/${jid}`);
+                const messages = await res.json();
+                
+                if (messages.length === 0) {
+                    messagesContainer.innerHTML = '<div class="text-center text-gray-400 mt-4">暫無訊息</div>';
+                    return;
+                }
+
+                const html = messages
+                    .filter(msg => {
+                        const m = msg.full_message_json || msg.message;
+                        if (!m) return false;
+                        if (m.protocolMessage || m.senderKeyDistributionMessage) return false;
+                        if (msg.message_type === 'associatedChildMessage') return false;
+                        return true;
+                    })
+                    .map(msg => renderMessageBubble(msg))
+                    .join('');
+                
+                // Only update if changed to avoid flicker (simple check length or hash?)
+                // For now just replace
+                messagesContainer.innerHTML = html;
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            } catch (e) {
+                console.error('Error loading messages:', e);
+            }
+        }
+        
+        function renderMessageBubble(msg) {
+            const isFromMe = msg.from_me;
+            const timestamp = msg.message_timestamp;
+            const date = new Date(timestamp).toLocaleString('zh-HK'); 
+            
+            let content = msg.content || '';
+            let type = msg.message_type;
+            let attachmentPath = msg.attachment_path;
+
+            // Display Logic
+            let displayContent = content;
+            if (displayContent === 'conversation' || displayContent === 'extendedTextMessage') {
+                 if (!displayContent || displayContent === 'conversation' || displayContent === 'extendedTextMessage') {
+                      const m = msg.full_message_json?.message || {};
+                      if (m.contactMessage) displayContent = '[聯絡人卡片]';
+                      else if (m.locationMessage) displayContent = '[位置資訊]';
+                      else if (m.pollCreationMessageV3) displayContent = '[投票]'; 
+                      else displayContent = '(無內容)';
+                 }
+            } else if (displayContent === 'stickerMessage') {
+                displayContent = '[貼圖]';
+            } else if (displayContent === 'audioMessage') {
+                displayContent = '[語音]';
+            } else if (displayContent === 'imageMessage') {
+                displayContent = '[圖片]';
+            } else if (displayContent === 'videoMessage') {
+                displayContent = '[影片]';
+            } else if (displayContent === 'pollCreationMessageV3') {
+                displayContent = '[投票]';
+            }
+
+            let attachmentHtml = '';
+            
+            if (attachmentPath) {
+                 const mediaPath = `/media/${attachmentPath}`;
+                 if (['imageMessage', 'image'].includes(type)) {
+                     attachmentHtml = `<img src="${mediaPath}" class="mt-2 rounded-lg max-w-xs cursor-pointer shadow-sm hover:opacity-90 transition" onclick="window.open('${mediaPath}', '_blank')" />`;
+                     if (!content || content === 'imageMessage') displayContent = '';
+                 } else if (['videoMessage', 'video'].includes(type)) {
+                     attachmentHtml = `<video controls src="${mediaPath}" class="mt-2 rounded-lg max-w-xs shadow-sm"></video>`;
+                     if (!content || content === 'videoMessage') displayContent = '';
+                 } else if (['audioMessage', 'audio'].includes(type)) {
+                     attachmentHtml = `<audio controls src="${mediaPath}" class="mt-2 w-64"></audio>`;
+                     if (!content || content === 'audioMessage') displayContent = '';
+                 } else if (['stickerMessage', 'sticker'].includes(type)) {
+                     attachmentHtml = `<img src="${mediaPath}" class="mt-2 w-32 h-32 object-contain" />`;
+                     displayContent = '';
+                 } else {
+                     const fileName = content || '附件';
+                     attachmentHtml = `
+                        <a href="${mediaPath}" target="_blank" class="block mt-2 bg-white/50 p-2 rounded border border-gray-200 hover:bg-white transition flex items-center gap-2 max-w-xs">
+                            <div class="bg-gray-200 p-2 rounded text-gray-600">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            </div>
+                            <div class="overflow-hidden">
+                                <div class="text-sm font-semibold truncate text-gray-800">${fileName}</div>
+                                <div class="text-xs text-gray-500">點擊下載</div>
+                            </div>
+                        </a>`;
+                     if (content === fileName) displayContent = '';
+                 }
+            }
+
+            if (!displayContent && !attachmentHtml) {
+                displayContent = '<span class="italic text-gray-400">無法顯示此訊息格式</span>';
+            }
+
+            const isSticker = ['stickerMessage', 'sticker'].includes(type);
+            const bubbleClass = isSticker ? 'bg-transparent shadow-none p-0' : (isFromMe ? 'message-out' : 'message-in');
+            const timeClass = isSticker ? 'text-gray-500 bg-white/50 px-1 rounded' : 'text-gray-400';
+
+            return `
+                <div class="chat-message rounded-lg mb-2 ${bubbleClass} ${!isSticker ? 'p-3 shadow-sm' : ''}">
+                    ${msg.push_name && !isFromMe && !isSticker ? `<div class="text-xs text-orange-600 font-bold mb-1">${msg.push_name}</div>` : ''}
+                    ${displayContent ? `<div class="text-sm text-gray-800 break-words whitespace-pre-wrap">${displayContent}</div>` : ''}
+                    ${attachmentHtml}
+                    <div class="text-[10px] mt-1 text-right ${timeClass}">${date}</div>
+                </div>
+            `;
+        }
+
+        // Start polling
+        startSession(); // Auto-start on load
+        setInterval(checkStatus, 3000); // Check status every 3 seconds
+        
+        // Auto-refresh contacts occasionally to catch new syncs
+        setInterval(() => {
+            if (!document.getElementById('qr-container').classList.contains('hidden')) return;
+            loadContacts();
+        }, 10000); // Refresh contacts every 10 seconds
+
+        // --- Marketing Logic ---
+        let selectedContacts = new Set();
+        let marketingContacts = [];
+
+        async function openMarketing() {
+            document.getElementById('marketing-modal').classList.remove('hidden');
+            
+            // Ensure contacts are loaded
+            if (allContacts.length === 0) {
+                await loadContacts();
+            }
+
+            // Load stats
+            try {
+                const res = await fetch(`/api/session/${currentSessionId}/daily-stats`);
+                const stats = await res.json();
+                const remaining = stats.remaining;
+                const el = document.getElementById('daily-limit-text');
+                el.textContent = `${stats.sent} / ${stats.limit} (剩餘: ${remaining})`;
+                el.className = remaining > 0 ? 'text-green-600 font-bold ml-1' : 'text-red-600 font-bold ml-1';
+                
+                if (remaining <= 0) {
+                    document.getElementById('btn-broadcast').disabled = true;
+                    document.getElementById('btn-broadcast').classList.add('opacity-50', 'cursor-not-allowed');
+                    document.getElementById('btn-broadcast').innerHTML = '<span>🚫 今日額度已用完</span>';
+                }
+            } catch(e) { console.error(e); }
+
+            // Render Contacts
+            // Filter out status broadcast
+            marketingContacts = allContacts.filter(c => {
+                const id = c.jid || c.id;
+                return id && !id.includes('status@broadcast');
+            });
+            renderMarketingContacts();
+        }
+
+        function closeMarketing() {
+            document.getElementById('marketing-modal').classList.add('hidden');
+        }
+
+        function renderMarketingContacts() {
+            const list = document.getElementById('mkt-contacts-list');
+            const query = document.getElementById('mkt-search').value.toLowerCase();
+            
+            // Filter contacts properly
+            const filtered = marketingContacts.filter(c => {
+                const id = c.jid || c.id || '';
+                // Filter out broadcast and special ids
+                if (id.includes('@broadcast') || id.includes('@lid')) return false;
+                
+                return (c.name && c.name.toLowerCase().includes(query)) || 
+                       (c.notify && c.notify.toLowerCase().includes(query)) ||
+                       id.includes(query);
+            });
+
+            if (filtered.length === 0) {
+                list.innerHTML = '<div class="p-4 text-center text-gray-400 text-xs">沒有找到聯絡人</div>';
+                return;
+            }
+
+            list.innerHTML = filtered.map(c => {
+                const id = c.jid || c.id;
+                const isGroup = id.endsWith('@g.us');
+                // Use consistent name logic
+                const name = c.name || c.notify || (isGroup ? "未命名群組" : id.split('@')[0]);
+                
+                const isSelected = selectedContacts.has(id);
+                return `
+                    <label class="flex items-center p-2 hover:bg-gray-100 rounded cursor-pointer border-b border-gray-50">
+                        <input type="checkbox" value="${id}" ${isSelected ? 'checked' : ''} onchange="toggleContact('${id}', this)" class="form-checkbox h-4 w-4 text-[#00a884] rounded border-gray-300 focus:ring-[#00a884] shrink-0">
+                        <div class="ml-2 overflow-hidden w-full">
+                            <div class="text-sm font-medium text-gray-800 truncate">${name}</div>
+                            <div class="text-xs text-gray-500 truncate flex items-center justify-between">
+                                <span>${isGroup ? '群組' : id.split('@')[0]}</span>
+                                ${isGroup ? '<span class="bg-gray-200 text-gray-600 px-1 rounded text-[10px]">Group</span>' : ''}
+                            </div>
+                        </div>
+                    </label>
+                `;
+            }).join('');
+        }
+
+        function filterMarketingContacts() {
+            renderMarketingContacts();
+        }
+
+        function toggleContact(id, cb) {
+            if (cb.checked) selectedContacts.add(id);
+            else selectedContacts.delete(id);
+            document.getElementById('selected-count').textContent = `已選: ${selectedContacts.size}`;
+        }
+
+        function toggleAllMarketing(cb) {
+            const query = document.getElementById('mkt-search').value.toLowerCase();
+            const filtered = marketingContacts.filter(c => {
+                const id = c.jid || c.id || '';
+                return (c.name && c.name.toLowerCase().includes(query)) || 
+                       (c.notify && c.notify.toLowerCase().includes(query)) ||
+                       id.includes(query);
+            });
+
+            filtered.forEach(c => {
+                const id = c.jid || c.id;
+                if (cb.checked) selectedContacts.add(id);
+                else selectedContacts.delete(id);
+            });
+            
+            renderMarketingContacts();
+            document.getElementById('selected-count').textContent = `已選: ${selectedContacts.size}`;
+        }
+
+        function addManualContact() {
+            const input = document.getElementById('manual-number');
+            let num = input.value.replace(/[^0-9]/g, '');
+            if (!num) return alert('請輸入有效的電話號碼');
+            
+            const jid = num + '@s.whatsapp.net';
+            
+            // Check if already exists
+            if (!marketingContacts.find(c => c.id === jid || c.jid === jid)) {
+                marketingContacts.unshift({
+                    id: jid,
+                    name: `手動新增 (${num})`,
+                    notify: num
+                });
+            }
+            
+            // Auto select
+            selectedContacts.add(jid);
+            renderMarketingContacts();
+            document.getElementById('selected-count').textContent = `已選: ${selectedContacts.size}`;
+            input.value = '';
+        }
+
+        async function sendBroadcast() {
+            const recipients = Array.from(selectedContacts);
+            if (recipients.length === 0) return alert('請至少選擇一位聯絡人');
+            
+            const text = document.getElementById('mkt-text').value;
+            const fileInput = document.getElementById('mkt-file');
+            
+            if (!text && fileInput.files.length === 0) return alert('請輸入訊息內容或選擇附件');
+
+            if (!confirm(`確定要發送給 ${recipients.length} 位聯絡人嗎？\n\n系統將會逐一發送，請勿關閉視窗。`)) return;
+
+            const btn = document.getElementById('btn-broadcast');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> 發送中...`;
+
+            const formData = new FormData();
+            formData.append('recipients', JSON.stringify(recipients));
+            formData.append('text', text);
+            if (fileInput.files[0]) {
+                formData.append('attachment', fileInput.files[0]);
+            }
+
+            try {
+                const res = await fetch(`/api/session/${currentSessionId}/broadcast`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await res.json();
+                
+                if (result.error) {
+                    alert('發送失敗: ' + result.error);
+                } else {
+                    alert('廣播任務已啟動！\n\n系統將在背景逐一發送訊息，您可以繼續使用其他功能。');
+                    closeMarketing();
+                    // Reset form
+                    document.getElementById('mkt-text').value = '';
+                    document.getElementById('mkt-file').value = '';
+                    selectedContacts.clear();
+                    renderMarketingContacts();
+                    document.getElementById('selected-count').textContent = '已選: 0';
+                }
+            } catch (e) {
+                alert('發生錯誤: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+    </script>
+</body>
+</html>
