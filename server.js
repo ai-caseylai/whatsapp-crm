@@ -361,26 +361,58 @@ async function startSession(sessionId) {
 
             // 2. Explicitly fetch groups to ensure they are in contacts
             try {
+                console.log(`[${sessionId}] 正在獲取所有群組信息...`);
                 const groups = await sock.groupFetchAllParticipating();
                 const groupContacts = Object.keys(groups).map(jid => {
                     const group = groups[jid];
                     return {
                         session_id: sessionId,
                         jid: jid,
-                        name: group.subject,
-                        notify: group.subject,
+                        name: group.subject || '未命名群組',
+                        notify: group.subject || '未命名群組',
                         is_group: true,
                         updated_at: new Date()
                     };
                 });
                 
                 if (groupContacts.length > 0) {
-                     await supabase.from('whatsapp_contacts')
+                    console.log(`[${sessionId}] 找到 ${groupContacts.length} 個群組，正在更新名稱...`);
+                    await supabase.from('whatsapp_contacts')
                         .upsert(groupContacts, { onConflict: 'session_id,jid' });
+                    console.log(`[${sessionId}] ✅ 群組名稱已更新`);
                 }
             } catch (e) {
-                console.error(`Error fetching groups for ${sessionId}:`, e);
+                console.error(`[${sessionId}] ❌ 獲取群組信息時出錯:`, e);
             }
+            
+            // 3. Add periodic group name refresh (every 5 minutes)
+            if (session.groupRefreshTimer) {
+                clearInterval(session.groupRefreshTimer);
+            }
+            
+            session.groupRefreshTimer = setInterval(async () => {
+                try {
+                    const groups = await sock.groupFetchAllParticipating();
+                    const groupUpdates = Object.keys(groups).map(jid => ({
+                        session_id: sessionId,
+                        jid: jid,
+                        name: groups[jid].subject || '未命名群組',
+                        notify: groups[jid].subject || '未命名群組',
+                        is_group: true,
+                        updated_at: new Date()
+                    }));
+                    
+                    if (groupUpdates.length > 0) {
+                        await supabase.from('whatsapp_contacts')
+                            .upsert(groupUpdates, { onConflict: 'session_id,jid', ignoreDuplicates: false });
+                        console.log(`[${sessionId}] 🔄 定期更新了 ${groupUpdates.length} 個群組名稱`);
+                    }
+                } catch (e) {
+                    console.error(`[${sessionId}] 定期群組更新失敗:`, e.message);
+                }
+            }, 5 * 60 * 1000); // Every 5 minutes
+            
+            session.groupRefreshTimer.unref();
         }
     });
 
@@ -480,18 +512,62 @@ async function startSession(sessionId) {
         
         // 1. Save Chats info to contacts
         if (chats.length > 0) {
-            const chatContacts = chats.map(chat => ({
-                session_id: sessionId,
-                jid: chat.id,
-                name: chat.name || chat.id.split('@')[0],
-                notify: chat.name,
-                is_group: chat.id.endsWith('@g.us'),
-                unread_count: chat.unreadCount || 0,
-                updated_at: new Date(chat.conversationTimestamp * 1000 || Date.now())
-            }));
+            const chatContacts = chats.map(chat => {
+                const isGroup = chat.id.endsWith('@g.us');
+                // For groups without name, try to fetch it later instead of using JID
+                let name = chat.name;
+                let notify = chat.name;
+                
+                // Don't use JID as name for groups
+                if (isGroup && !name) {
+                    name = null; // Will be updated by groupFetchAllParticipating
+                    notify = null;
+                }
+                
+                return {
+                    session_id: sessionId,
+                    jid: chat.id,
+                    name: name,
+                    notify: notify,
+                    is_group: isGroup,
+                    unread_count: chat.unreadCount || 0,
+                    updated_at: new Date(chat.conversationTimestamp * 1000 || Date.now())
+                };
+            });
             
             await supabase.from('whatsapp_contacts')
-                .upsert(chatContacts, { onConflict: 'session_id,jid' });
+                .upsert(chatContacts, { onConflict: 'session_id,jid', ignoreDuplicates: false });
+            
+            // After saving chats, trigger a group info fetch for groups without names
+            const groupsWithoutNames = chats.filter(c => c.id.endsWith('@g.us') && !c.name);
+            if (groupsWithoutNames.length > 0) {
+                console.log(`[${sessionId}] 發現 ${groupsWithoutNames.length} 個缺少名稱的群組，將獲取詳細信息...`);
+                
+                // Fetch group info in background
+                setTimeout(async () => {
+                    try {
+                        const groups = await sock.groupFetchAllParticipating();
+                        const updates = groupsWithoutNames
+                            .filter(c => groups[c.id])
+                            .map(c => ({
+                                session_id: sessionId,
+                                jid: c.id,
+                                name: groups[c.id].subject || '未命名群組',
+                                notify: groups[c.id].subject || '未命名群組',
+                                is_group: true,
+                                updated_at: new Date()
+                            }));
+                        
+                        if (updates.length > 0) {
+                            await supabase.from('whatsapp_contacts')
+                                .upsert(updates, { onConflict: 'session_id,jid', ignoreDuplicates: false });
+                            console.log(`[${sessionId}] ✅ 已更新 ${updates.length} 個群組名稱`);
+                        }
+                    } catch (e) {
+                        console.error(`[${sessionId}] 獲取群組名稱失敗:`, e.message);
+                    }
+                }, 2000); // Wait 2 seconds to avoid overwhelming the connection
+            }
         }
         
         // 2. Save Contacts (and update cache)
@@ -996,6 +1072,46 @@ app.post('/api/session/:id/logout', async (req, res) => {
     res.json({ success: true });
 });
 
+// Refresh group names
+app.post('/api/session/:id/refresh-groups', async (req, res) => {
+    const sessionId = req.params.id;
+    const mem = sessions.get(sessionId);
+    
+    if (!mem || !mem.sock) {
+        return res.status(400).json({ error: '會話未連接' });
+    }
+    
+    try {
+        console.log(`[${sessionId}] 手動刷新群組名稱...`);
+        const groups = await mem.sock.groupFetchAllParticipating();
+        const groupUpdates = Object.keys(groups).map(jid => ({
+            session_id: sessionId,
+            jid: jid,
+            name: groups[jid].subject || '未命名群組',
+            notify: groups[jid].subject || '未命名群組',
+            is_group: true,
+            updated_at: new Date()
+        }));
+        
+        if (groupUpdates.length > 0) {
+            await supabase.from('whatsapp_contacts')
+                .upsert(groupUpdates, { onConflict: 'session_id,jid', ignoreDuplicates: false });
+            
+            console.log(`[${sessionId}] ✅ 已刷新 ${groupUpdates.length} 個群組名稱`);
+            return res.json({ 
+                success: true, 
+                groupsUpdated: groupUpdates.length,
+                message: `已更新 ${groupUpdates.length} 個群組名稱`
+            });
+        } else {
+            return res.json({ success: true, groupsUpdated: 0, message: '沒有找到群組' });
+        }
+    } catch (error) {
+        console.error(`[${sessionId}] 刷新群組名稱失敗:`, error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 // Restart Session (to trigger re-sync)
 app.post('/api/session/:id/restart', async (req, res) => {
     const sessionId = req.params.id;
@@ -1471,6 +1587,10 @@ process.on('SIGINT', async () => {
         
         if (session.heartbeatTimer) {
             clearInterval(session.heartbeatTimer);
+        }
+        
+        if (session.groupRefreshTimer) {
+            clearInterval(session.groupRefreshTimer);
         }
     }
     
