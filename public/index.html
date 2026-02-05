@@ -650,13 +650,13 @@
                 else if (m.locationMessage) displayContent = '[位置資訊]';
                 else if (m.pollCreationMessageV3) displayContent = '[投票]'; 
                 else if (!displayContent) displayContent = '';  // 保持空白，稍後處理
-            } else if (displayContent === 'stickerMessage') {
+            } else if (displayContent === 'stickerMessage' || displayContent === '[貼圖]') {
                 displayContent = '';  // 貼圖不需要文字
-            } else if (displayContent === 'audioMessage' || displayContent === 'pttMessage') {
+            } else if (displayContent === 'audioMessage' || displayContent === 'pttMessage' || displayContent === '[語音訊息]' || displayContent === '[語音]') {
                 displayContent = '';  // 語音不需要文字（有播放器）
-            } else if (displayContent === 'imageMessage') {
+            } else if (displayContent === 'imageMessage' || displayContent === '[圖片]') {
                 displayContent = '';  // 圖片不需要文字（會顯示圖片）
-            } else if (displayContent === 'videoMessage') {
+            } else if (displayContent === 'videoMessage' || displayContent === '[影片]') {
                 displayContent = '';  // 視頻不需要文字（會顯示視頻）
             } else if (displayContent === 'pollCreationMessageV3') {
                 displayContent = '[投票]';
