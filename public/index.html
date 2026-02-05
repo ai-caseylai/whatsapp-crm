@@ -571,10 +571,23 @@
                 if (!id) return '';
                 
                 const isGroup = id.endsWith('@g.us');
-                // Improve display ID logic
-                const displayId = isGroup ? '群組 Group' : id.split('@')[0];
+                const isLID = id.endsWith('@lid');
                 
-                // Better name handling for groups
+                // Improve display ID logic
+                let displayId;
+                if (isGroup) {
+                    displayId = '群組 Group';
+                } else if (isLID) {
+                    // For LID contacts, show phone number nicely formatted
+                    const phoneNumber = id.split('@')[0];
+                    displayId = phoneNumber.length > 10 ? 
+                        `+${phoneNumber.substring(0, phoneNumber.length - 10)} ${phoneNumber.substring(phoneNumber.length - 10)}` :
+                        phoneNumber;
+                } else {
+                    displayId = id.split('@')[0];
+                }
+                
+                // Better name handling
                 let name;
                 if (c.name && c.name.trim()) {
                     name = c.name;
@@ -583,6 +596,9 @@
                 } else if (isGroup) {
                     // Don't show JID for groups, show friendly placeholder
                     name = "未命名群組 (同步中...)";
+                } else if (isLID) {
+                    // For LID contacts without name, show formatted phone
+                    name = displayId;
                 } else {
                     name = displayId;
                 } 
