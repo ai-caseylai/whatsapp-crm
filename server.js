@@ -973,24 +973,15 @@ app.post('/api/session/:id/fetch-history/:jid', async (req, res) => {
     try {
         console.log(`[${sessionId}] Manually fetching history for ${jid}...`);
         
-        // Fetch message history for this chat
-        // fetchMessageHistory returns { messages: [...], cursor: ... }
-        const result = await mem.sock.fetchMessageHistory(50, jid, undefined);
+        // Try to load messages from the chat directly using the chat API
+        const chatMessages = await mem.sock.loadMessages(jid, 50);
         
-        console.log(`[${sessionId}] Fetch result:`, typeof result, result ? Object.keys(result) : 'null');
+        console.log(`[${sessionId}] Loaded ${chatMessages ? chatMessages.length : 0} messages`);
         
-        // Handle different return formats
-        let messages = [];
-        if (Array.isArray(result)) {
-            messages = result;
-        } else if (result && result.messages) {
-            messages = result.messages;
-        } else if (result) {
-            console.log(`[${sessionId}] Unexpected result format from fetchMessageHistory`);
-            return res.status(500).json({ error: 'Unexpected result format from fetchMessageHistory' });
-        }
+        // chatMessages should be an array
+        const messages = chatMessages || [];
         
-        console.log(`[${sessionId}] Fetched ${messages.length} messages from ${jid}`);
+        console.log(`[${sessionId}] Processing ${messages.length} messages from ${jid}`);
         
         // Process and save messages
         if (messages && messages.length > 0) {
