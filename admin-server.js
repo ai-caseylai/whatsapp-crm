@@ -165,7 +165,7 @@ app.get('/api/admin/system', authenticate, (req, res) => {
 });
 
 // 获取媒体列表
-app.get('/api/media/list', (req, res) => {
+app.get('/api/admin/media/list', authenticate, (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const mediaType = req.query.type; // image, video, emoji
     

@@ -93,11 +93,37 @@
     <script>
         let allMedia = [];
         let currentFilter = 'all';
+        
+        // 檢查認證
+        function checkAuth() {
+            const token = localStorage.getItem('admin_token');
+            const urlParams = new URLSearchParams(window.location.search);
+            const tokenParam = urlParams.get('token');
+            
+            if (tokenParam) {
+                localStorage.setItem('admin_token', tokenParam);
+                return tokenParam;
+            }
+            
+            if (!token) {
+                // 默認使用密碼作為token
+                localStorage.setItem('admin_token', 'whatsapp-admin-2026');
+                return 'whatsapp-admin-2026';
+            }
+            
+            return token;
+        }
 
         async function loadMedia() {
             try {
+                const token = checkAuth();
+                
                 // 從後端 API 獲取媒體列表
-                const response = await fetch('/api/media/list?limit=100');
+                const response = await fetch('/api/admin/media/list?limit=100', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
                 
                 if (!response.ok) {
                     throw new Error('API 請求失敗');
