@@ -568,10 +568,11 @@
                 }
             }
 
-            // 3. Sort (Latest updated_at first)
+            // 3. Sort (Latest message time first)
             valid.sort((a, b) => {
-                const timeA = a.updated_at || '';
-                const timeB = b.updated_at || '';
+                // Use last_message_time if available, otherwise fall back to updated_at
+                const timeA = a.last_message_time || a.updated_at || '';
+                const timeB = b.last_message_time || b.updated_at || '';
                 return timeB.localeCompare(timeA);
             });
 

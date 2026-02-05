@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聯絡人列表 - WhatsApp CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .scrollbar-w-2::-webkit-scrollbar {
+            width: 0.5rem;
+        }
+        .scrollbar-thumb-rounded::-webkit-scrollbar-thumb {
+            border-radius: 0.25rem;
+            background-color: rgba(156, 163, 175, 0.5);
+        }
+        .scrollbar-thumb-rounded::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(107, 114, 128, 0.7);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen">
+        <!-- Header -->
+        <div class="bg-gradient-to-r from-green-600 to-teal-600 text-white shadow-lg">
+            <div class="container mx-auto px-4 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2Z"/>
+                        </svg>
+                        <h1 class="text-2xl font-bold">WhatsApp CRM - 聯絡人列表</h1>
+                    </div>
+                    <a href="/" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg transition">
+                        返回主頁
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="container mx-auto px-4 py-6">
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white rounded-xl shadow-sm p-4 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">總聯絡人</p>
+                            <p class="text-2xl font-bold text-gray-800" id="total-contacts">0</p>
+                        </div>
+                        <div class="bg-blue-100 p-3 rounded-lg">
+                            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm p-4 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">群組</p>
+                            <p class="text-2xl font-bold text-gray-800" id="total-groups">0</p>
+                        </div>
+                        <div class="bg-purple-100 p-3 rounded-lg">
+                            <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm p-4 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">個人聯絡人</p>
+                            <p class="text-2xl font-bold text-gray-800" id="total-individual">0</p>
+                        </div>
+                        <div class="bg-green-100 p-3 rounded-lg">
+                            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm p-4 border border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-500 text-sm">有名字</p>
+                            <p class="text-2xl font-bold text-gray-800" id="total-named">0</p>
+                        </div>
+                        <div class="bg-yellow-100 p-3 rounded-lg">
+                            <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters and Search -->
+            <div class="bg-white rounded-xl shadow-sm p-4 mb-6 border border-gray-200">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">搜索</label>
+                        <input type="text" id="search-input" placeholder="搜索名字或電話..." 
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">類型</label>
+                        <select id="type-filter" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                            <option value="all">全部</option>
+                            <option value="groups">群組</option>
+                            <option value="individual">個人</option>
+                            <option value="lid">LID 聯絡人</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">排序</label>
+                        <select id="sort-filter" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                            <option value="name">名字 (A-Z)</option>
+                            <option value="name-desc">名字 (Z-A)</option>
+                            <option value="updated">最近更新</option>
+                            <option value="phone">電話號碼</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-4 flex items-center justify-between">
+                    <button onclick="exportCSV()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        匯出 CSV
+                    </button>
+                    <button onclick="loadContacts()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        重新載入
+                    </button>
+                </div>
+            </div>
+
+            <!-- Contacts Table -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">類型</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名字</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話號碼</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">備註名稱</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">JID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最後更新</th>
+                            </tr>
+                        </thead>
+                        <tbody id="contacts-tbody" class="bg-white divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="7" class="px-6 py-8 text-center text-gray-500">
+                                    <div class="flex flex-col items-center justify-center">
+                                        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mb-4"></div>
+                                        <p>載入中...</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <div class="mt-6 flex items-center justify-between">
+                <div class="text-sm text-gray-700">
+                    顯示 <span id="showing-from">0</span> - <span id="showing-to">0</span> / 共 <span id="showing-total">0</span> 個聯絡人
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="previousPage()" id="prev-btn" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        上一頁
+                    </button>
+                    <button onclick="nextPage()" id="next-btn" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        下一頁
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allContacts = [];
+        let filteredContacts = [];
+        let currentPage = 1;
+        const itemsPerPage = 50;
+        let currentSessionId = localStorage.getItem('wa_crm_session_id') || 'sess_aqvjddrte_1770264874287';
+
+        // Load contacts on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadContacts();
+            
+            // Add event listeners
+            document.getElementById('search-input').addEventListener('input', filterAndSort);
+            document.getElementById('type-filter').addEventListener('change', filterAndSort);
+            document.getElementById('sort-filter').addEventListener('change', filterAndSort);
+        });
+
+        async function loadContacts() {
+            try {
+                const res = await fetch(`/api/session/${currentSessionId}/contacts`);
+                if (!res.ok) throw new Error('Failed to load contacts');
+                
+                allContacts = await res.json();
+                
+                // Update stats
+                updateStats();
+                
+                // Initial filter and sort
+                filterAndSort();
+            } catch (error) {
+                console.error('Error loading contacts:', error);
+                document.getElementById('contacts-tbody').innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center text-red-500">
+                            載入失敗: ${error.message}
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        function updateStats() {
+            const total = allContacts.length;
+            const groups = allContacts.filter(c => c.jid?.endsWith('@g.us')).length;
+            const individual = total - groups;
+            const named = allContacts.filter(c => c.name && c.name.trim()).length;
+
+            document.getElementById('total-contacts').textContent = total;
+            document.getElementById('total-groups').textContent = groups;
+            document.getElementById('total-individual').textContent = individual;
+            document.getElementById('total-named').textContent = named;
+        }
+
+        function filterAndSort() {
+            const searchQuery = document.getElementById('search-input').value.toLowerCase();
+            const typeFilter = document.getElementById('type-filter').value;
+            const sortFilter = document.getElementById('sort-filter').value;
+
+            // Filter
+            filteredContacts = allContacts.filter(contact => {
+                // Type filter
+                if (typeFilter === 'groups' && !contact.jid?.endsWith('@g.us')) return false;
+                if (typeFilter === 'individual' && contact.jid?.endsWith('@g.us')) return false;
+                if (typeFilter === 'lid' && !contact.jid?.endsWith('@lid')) return false;
+
+                // Search filter
+                if (searchQuery) {
+                    const name = (contact.name || '').toLowerCase();
+                    const notify = (contact.notify || '').toLowerCase();
+                    const phone = extractPhone(contact.jid).toLowerCase();
+                    const jid = (contact.jid || '').toLowerCase();
+                    
+                    return name.includes(searchQuery) || 
+                           notify.includes(searchQuery) || 
+                           phone.includes(searchQuery) ||
+                           jid.includes(searchQuery);
+                }
+
+                return true;
+            });
+
+            // Sort
+            filteredContacts.sort((a, b) => {
+                switch (sortFilter) {
+                    case 'name':
+                        return (a.name || a.jid || '').localeCompare(b.name || b.jid || '');
+                    case 'name-desc':
+                        return (b.name || b.jid || '').localeCompare(a.name || a.jid || '');
+                    case 'updated':
+                        return (b.updated_at || '').localeCompare(a.updated_at || '');
+                    case 'phone':
+                        return extractPhone(a.jid).localeCompare(extractPhone(b.jid));
+                    default:
+                        return 0;
+                }
+            });
+
+            // Reset to first page
+            currentPage = 1;
+            renderTable();
+        }
+
+        function extractPhone(jid) {
+            if (!jid) return '';
+            return jid.split('@')[0];
+        }
+
+        function formatPhone(jid) {
+            if (!jid) return '-';
+            const phone = extractPhone(jid);
+            
+            if (jid.endsWith('@lid')) {
+                // Format LID phone numbers
+                if (phone.length > 10) {
+                    return `+${phone.substring(0, phone.length - 10)} ${phone.substring(phone.length - 10)}`;
+                }
+            }
+            
+            return phone;
+        }
+
+        function getContactType(jid) {
+            if (!jid) return { text: '未知', class: 'bg-gray-100 text-gray-800' };
+            
+            if (jid.endsWith('@g.us')) {
+                return { text: '群組', class: 'bg-purple-100 text-purple-800' };
+            } else if (jid.endsWith('@lid')) {
+                return { text: 'LID', class: 'bg-blue-100 text-blue-800' };
+            } else {
+                return { text: '個人', class: 'bg-green-100 text-green-800' };
+            }
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleString('zh-TW', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function renderTable() {
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageContacts = filteredContacts.slice(start, end);
+
+            if (pageContacts.length === 0) {
+                document.getElementById('contacts-tbody').innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center text-gray-500">
+                            沒有找到符合條件的聯絡人
+                        </td>
+                    </tr>
+                `;
+            } else {
+                document.getElementById('contacts-tbody').innerHTML = pageContacts.map((contact, index) => {
+                    const type = getContactType(contact.jid);
+                    const displayName = contact.name || contact.notify || '(無名稱)';
+                    const phone = formatPhone(contact.jid);
+                    
+                    return `
+                        <tr class="hover:bg-gray-50 transition">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${start + index + 1}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 py-1 text-xs font-semibold rounded-full ${type.class}">
+                                    ${type.text}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                ${displayName}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-mono">
+                                ${phone}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                ${contact.notify || '-'}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-500 font-mono truncate max-w-xs">
+                                ${contact.jid || '-'}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                ${formatDate(contact.updated_at)}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Update pagination info
+            document.getElementById('showing-from').textContent = filteredContacts.length > 0 ? start + 1 : 0;
+            document.getElementById('showing-to').textContent = Math.min(end, filteredContacts.length);
+            document.getElementById('showing-total').textContent = filteredContacts.length;
+
+            // Update pagination buttons
+            document.getElementById('prev-btn').disabled = currentPage === 1;
+            document.getElementById('next-btn').disabled = end >= filteredContacts.length;
+        }
+
+        function previousPage() {
+            if (currentPage > 1) {
+                currentPage--;
+                renderTable();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        function nextPage() {
+            if (currentPage * itemsPerPage < filteredContacts.length) {
+                currentPage++;
+                renderTable();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        function exportCSV() {
+            // Create CSV header
+            let csv = '\uFEFF'; // UTF-8 BOM for Excel
+            csv += '編號,類型,名字,電話號碼,備註名稱,JID,最後更新\n';
+
+            // Add data rows
+            filteredContacts.forEach((contact, index) => {
+                const type = getContactType(contact.jid).text;
+                const name = (contact.name || contact.notify || '(無名稱)').replace(/"/g, '""');
+                const phone = formatPhone(contact.jid);
+                const notify = (contact.notify || '-').replace(/"/g, '""');
+                const jid = (contact.jid || '-').replace(/"/g, '""');
+                const date = formatDate(contact.updated_at);
+
+                csv += `${index + 1},"${type}","${name}","${phone}","${notify}","${jid}","${date}"\n`;
+            });
+
+            // Create download link
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            
+            link.setAttribute('href', url);
+            link.setAttribute('download', `聯絡人列表_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>

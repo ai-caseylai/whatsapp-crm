@@ -1226,25 +1226,27 @@ app.post('/api/session/:id/restart', async (req, res) => {
     }
 });
 
-// Get Contacts (Protected by Session ID only)
+// Get Contacts (Protected by Session ID only) with last message time
 app.get('/api/session/:id/contacts', async (req, res) => {
+    const sessionId = req.params.id;
+    
     // Also try to fetch contacts from Supabase first
     let { data, error } = await supabase
         .from('whatsapp_contacts')
         .select('*')
-        .eq('session_id', req.params.id);
+        .eq('session_id', sessionId);
         
     // If empty, use Store to populate
     if ((!data || data.length === 0)) {
          console.log('Contacts DB empty, trying to fetch from local cache...');
-         const cache = contactCache.get(req.params.id);
+         const cache = contactCache.get(sessionId);
          
          if (cache && cache.size > 0) {
              const contacts = Array.from(cache.values());
              
              // Format for DB and Response
              const upsertData = contacts.map(c => ({
-                session_id: req.params.id,
+                session_id: sessionId,
                 jid: c.id,
                 name: c.name || c.notify || c.verifiedName || null,
                 notify: c.notify || null,
@@ -1256,13 +1258,47 @@ app.get('/api/session/:id/contacts', async (req, res) => {
                 if(error) console.error('Failed to sync cache to DB:', error);
             });
             
-            // Return this directly to frontend
-            return res.json(upsertData);
+            data = upsertData;
          }
     }
     
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    
+    // Enrich contacts with last message time
+    try {
+        // Get last message time for each contact
+        const jids = data.map(c => c.jid);
+        
+        // Query for the last message from each JID
+        const { data: lastMessages } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, message_timestamp')
+            .eq('session_id', sessionId)
+            .in('remote_jid', jids)
+            .order('message_timestamp', { ascending: false });
+        
+        // Create a map of JID to last message time
+        const lastMessageMap = new Map();
+        if (lastMessages) {
+            lastMessages.forEach(msg => {
+                if (!lastMessageMap.has(msg.remote_jid)) {
+                    lastMessageMap.set(msg.remote_jid, msg.message_timestamp);
+                }
+            });
+        }
+        
+        // Add last_message_time to each contact
+        const enrichedData = data.map(contact => ({
+            ...contact,
+            last_message_time: lastMessageMap.get(contact.jid) || contact.updated_at || null
+        }));
+        
+        res.json(enrichedData);
+    } catch (enrichError) {
+        console.error('Error enriching contacts:', enrichError);
+        // If enrichment fails, return original data
+        res.json(data);
+    }
 });
 
 // Get Messages
