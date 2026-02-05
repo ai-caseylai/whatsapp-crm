@@ -940,11 +940,17 @@ async function prepareMessageForSupabase(sessionId, msg, sock) {
         else contentText = messageType || '未知訊息';
     }
 
+    // Extract participant info (for group messages)
+    const participant = msg.key.participant || null; // Who sent the message in a group
+    const participantPhone = participant ? participant.split('@')[0] : null;
+    
     return {
         message_id: msg.key.id,
         session_id: sessionId,
         remote_jid: msg.key.remoteJid,
         from_me: msg.key.fromMe || false,
+        participant: participant, // 群組中的發送者 JID
+        participant_phone: participantPhone, // 發送者電話號碼
         message_timestamp: new Date(timestamp * 1000),
         push_name: msg.pushName || null,
         message_type: messageType,
@@ -1574,14 +1580,34 @@ app.post('/api/v1/sessions', checkMasterKey, async (req, res) => {
     }
 });
 
-// 2. Get QR
+// 2. List All Sessions
+app.get('/api/v1/sessions', checkAuthToken, (req, res) => {
+    const sessionList = [];
+    for (const [id, session] of sessions.entries()) {
+        sessionList.push({
+            id: id,
+            status: session.status,
+            phone: session.phone || null,
+            qr: session.qr ? '有 QR 碼' : null,
+            connectedAt: session.connectedAt || null,
+            lastHeartbeat: session.lastHeartbeat || null
+        });
+    }
+    res.json({ 
+        success: true, 
+        count: sessionList.length,
+        sessions: sessionList 
+    });
+});
+
+// 3. Get QR
 app.get('/api/v1/sessions/:id/qr', checkAuthToken, (req, res) => {
     const session = sessions.get(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     res.json({ qr: session.qr });
 });
 
-// 3. Send Message
+// 4. Send Message
 app.post('/api/v1/messages', checkAuthToken, async (req, res) => {
     const sessionId = req.query.sessionId;
     const session = sessions.get(sessionId);
