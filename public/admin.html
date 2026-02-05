@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp CRM 管理面板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .tab-active { @apply border-b-2 border-blue-500 text-blue-600; }
+        .log-container { font-family: 'Courier New', monospace; font-size: 12px; }
+        .status-online { @apply bg-green-100 text-green-800; }
+        .status-offline { @apply bg-red-100 text-red-800; }
+        .btn-primary { @apply bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded transition; }
+        .btn-danger { @apply bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded transition; }
+        .btn-success { @apply bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded transition; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div id="login-screen" class="fixed inset-0 bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+        <div class="bg-white p-8 rounded-lg shadow-2xl w-96">
+            <h1 class="text-3xl font-bold mb-6 text-center text-gray-800">🎛️ 管理面板登录</h1>
+            <input type="password" id="password" placeholder="输入管理密码" 
+                class="w-full px-4 py-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button onclick="login()" class="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 rounded-lg font-bold transition">
+                登录
+            </button>
+            <p class="text-sm text-gray-500 mt-4 text-center">默认密码：admin-secret-key</p>
+        </div>
+    </div>
+
+    <div id="main-content" class="hidden">
+        <!-- Header -->
+        <div class="bg-white shadow-md">
+            <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+                <h1 class="text-2xl font-bold text-gray-800">🎛️ WhatsApp CRM 管理面板</h1>
+                <div class="flex items-center gap-4">
+                    <span class="text-sm text-gray-600" id="current-time"></span>
+                    <button onclick="logout()" class="text-sm text-red-600 hover:text-red-800">登出</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="bg-white border-b">
+            <div class="container mx-auto px-4">
+                <div class="flex gap-4">
+                    <button onclick="switchTab('status')" class="tab-button px-4 py-3 font-medium tab-active">
+                        📊 服务状态
+                    </button>
+                    <button onclick="switchTab('logs')" class="tab-button px-4 py-3 font-medium">
+                        📋 实时日志
+                    </button>
+                    <button onclick="switchTab('history')" class="tab-button px-4 py-3 font-medium">
+                        📜 部署历史
+                    </button>
+                    <button onclick="switchTab('system')" class="tab-button px-4 py-3 font-medium">
+                        💻 系统信息
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="container mx-auto px-4 py-6">
+            <!-- Status Tab -->
+            <div id="tab-status" class="tab-content">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div class="bg-white p-6 rounded-lg shadow">
+                        <h2 class="text-xl font-bold mb-4">💬 WhatsApp Bot</h2>
+                        <div id="status-bot" class="space-y-2"></div>
+                        <button onclick="restartService('whatsapp-bot')" class="btn-primary mt-4">
+                            🔄 重启服务
+                        </button>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow">
+                        <h2 class="text-xl font-bold mb-4">🪝 Webhook 服务</h2>
+                        <div id="status-webhook" class="space-y-2"></div>
+                        <button onclick="restartService('whatsapp-webhook')" class="btn-primary mt-4">
+                            🔄 重启服务
+                        </button>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h2 class="text-xl font-bold mb-4">🚀 快速操作</h2>
+                    <div class="flex flex-wrap gap-3">
+                        <button onclick="restartService('all')" class="btn-danger">
+                            🔄 重启所有服务
+                        </button>
+                        <button onclick="triggerDeploy()" class="btn-success">
+                            📥 手动部署
+                        </button>
+                        <button onclick="refreshStatus()" class="btn-primary">
+                            🔄 刷新状态
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Tab -->
+            <div id="tab-logs" class="tab-content hidden">
+                <div class="bg-white p-6 rounded-lg shadow mb-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold">📋 实时日志</h2>
+                        <div class="flex gap-2">
+                            <button onclick="switchLogService('whatsapp-bot')" 
+                                id="log-btn-bot" class="px-4 py-2 bg-blue-500 text-white rounded">
+                                WhatsApp Bot
+                            </button>
+                            <button onclick="switchLogService('whatsapp-webhook')" 
+                                id="log-btn-webhook" class="px-4 py-2 bg-gray-300 text-gray-700 rounded">
+                                Webhook
+                            </button>
+                            <button onclick="clearLogs()" class="px-4 py-2 bg-red-500 text-white rounded">
+                                清空
+                            </button>
+                        </div>
+                    </div>
+                    <div id="log-output" class="log-container bg-gray-900 text-green-400 p-4 rounded h-96 overflow-auto">
+                        <div class="text-gray-500">正在加载日志...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- History Tab -->
+            <div id="tab-history" class="tab-content hidden">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold">📜 Git 提交历史</h2>
+                        <button onclick="refreshHistory()" class="btn-primary">
+                            🔄 刷新
+                        </button>
+                    </div>
+                    <div id="git-history" class="space-y-3"></div>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow mt-6">
+                    <h2 class="text-xl font-bold mb-4">🔗 GitHub Webhook</h2>
+                    <a href="https://github.com/ai-caseylai/whatsapp-crm/settings/hooks" 
+                        target="_blank" class="btn-primary inline-block">
+                        📝 查看 Webhook 配置
+                    </a>
+                </div>
+            </div>
+
+            <!-- System Tab -->
+            <div id="tab-system" class="tab-content hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white p-6 rounded-lg shadow">
+                        <h3 class="text-lg font-bold mb-3">⏱️ 系统运行时间</h3>
+                        <pre id="sys-uptime" class="bg-gray-100 p-3 rounded text-sm"></pre>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow">
+                        <h3 class="text-lg font-bold mb-3">💾 内存使用</h3>
+                        <pre id="sys-memory" class="bg-gray-100 p-3 rounded text-sm"></pre>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow">
+                        <h3 class="text-lg font-bold mb-3">💿 磁盘使用</h3>
+                        <pre id="sys-disk" class="bg-gray-100 p-3 rounded text-sm"></pre>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow">
+                        <h3 class="text-lg font-bold mb-3">🌿 Git 状态</h3>
+                        <div class="bg-gray-100 p-3 rounded text-sm">
+                            <div><strong>分支:</strong> <span id="sys-git-branch"></span></div>
+                            <div class="mt-2"><strong>状态:</strong></div>
+                            <pre id="sys-git-status" class="mt-1"></pre>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="refreshSystem()" class="btn-primary mt-6">
+                    🔄 刷新系统信息
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let token = null;
+        let currentLogService = 'whatsapp-bot';
+        let logEventSource = null;
+
+        // 时间显示
+        setInterval(() => {
+            document.getElementById('current-time').textContent = new Date().toLocaleString('zh-CN');
+        }, 1000);
+
+        // 登录
+        async function login() {
+            const password = document.getElementById('password').value;
+            try {
+                const res = await fetch('/api/admin/auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                const data = await res.json();
+                if (data.token) {
+                    token = data.token;
+                    document.getElementById('login-screen').classList.add('hidden');
+                    document.getElementById('main-content').classList.remove('hidden');
+                    init();
+                } else {
+                    alert('密码错误');
+                }
+            } catch (e) {
+                alert('登录失败: ' + e.message);
+            }
+        }
+
+        // 登出
+        function logout() {
+            token = null;
+            document.getElementById('login-screen').classList.remove('hidden');
+            document.getElementById('main-content').classList.add('hidden');
+            if (logEventSource) logEventSource.close();
+        }
+
+        // 初始化
+        function init() {
+            refreshStatus();
+            refreshHistory();
+            refreshSystem();
+        }
+
+        // 切换标签页
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('tab-active'));
+            document.getElementById('tab-' + tabName).classList.remove('hidden');
+            event.target.classList.add('tab-active');
+            
+            if (tabName === 'logs') {
+                loadLogs();
+            }
+        }
+
+        // API 请求辅助函数
+        async function apiRequest(url, options = {}) {
+            const res = await fetch(url, {
+                ...options,
+                headers: {
+                    ...options.headers,
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            return await res.json();
+        }
+
+        // 刷新服务状态
+        async function refreshStatus() {
+            try {
+                const data = await apiRequest('/api/admin/status');
+                const bot = data.processes.find(p => p.name === 'whatsapp-bot');
+                const webhook = data.processes.find(p => p.name === 'whatsapp-webhook');
+                
+                displayServiceStatus('status-bot', bot);
+                displayServiceStatus('status-webhook', webhook);
+            } catch (e) {
+                console.error('Failed to refresh status:', e);
+            }
+        }
+
+        function displayServiceStatus(elementId, process) {
+            if (!process) return;
+            const html = `
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-1 rounded text-sm ${process.pm2_env.status === 'online' ? 'status-online' : 'status-offline'}">
+                        ${process.pm2_env.status === 'online' ? '🟢 运行中' : '🔴 已停止'}
+                    </span>
+                </div>
+                <div class="text-sm text-gray-600 mt-2">
+                    <div><strong>PID:</strong> ${process.pid}</div>
+                    <div><strong>内存:</strong> ${(process.monit.memory / 1024 / 1024).toFixed(1)} MB</div>
+                    <div><strong>CPU:</strong> ${process.monit.cpu}%</div>
+                    <div><strong>重启次数:</strong> ${process.pm2_env.restart_time}</div>
+                    <div><strong>运行时间:</strong> ${formatUptime(process.pm2_env.pm_uptime)}</div>
+                </div>
+            `;
+            document.getElementById(elementId).innerHTML = html;
+        }
+
+        function formatUptime(timestamp) {
+            const seconds = Math.floor((Date.now() - timestamp) / 1000);
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return `${days}天 ${hours}小时 ${minutes}分钟`;
+        }
+
+        // 重启服务
+        async function restartService(service) {
+            if (!confirm(`确定要重启 ${service} 吗？`)) return;
+            try {
+                const data = await apiRequest(`/api/admin/restart/${service}`, { method: 'POST' });
+                alert('重启成功！');
+                setTimeout(refreshStatus, 2000);
+            } catch (e) {
+                alert('重启失败: ' + e.message);
+            }
+        }
+
+        // 触发部署
+        async function triggerDeploy() {
+            if (!confirm('确定要手动触发部署吗？')) return;
+            try {
+                const data = await apiRequest('/api/admin/deploy', { method: 'POST' });
+                alert('部署已触发！');
+                setTimeout(refreshStatus, 2000);
+            } catch (e) {
+                alert('部署失败: ' + e.message);
+            }
+        }
+
+        // 切换日志服务
+        function switchLogService(service) {
+            currentLogService = service;
+            document.querySelectorAll('[id^="log-btn-"]').forEach(btn => {
+                btn.className = 'px-4 py-2 bg-gray-300 text-gray-700 rounded';
+            });
+            document.getElementById(`log-btn-${service}`).className = 'px-4 py-2 bg-blue-500 text-white rounded';
+            loadLogs();
+        }
+
+        // 加载日志
+        function loadLogs() {
+            if (logEventSource) logEventSource.close();
+            document.getElementById('log-output').innerHTML = '<div class="text-gray-500">正在连接日志流...</div>';
+            
+            logEventSource = new EventSource(`/api/admin/logs/${currentLogService}/stream`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            logEventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const logOutput = document.getElementById('log-output');
+                const logEntry = document.createElement('div');
+                logEntry.textContent = data.log || data.error;
+                logOutput.appendChild(logEntry);
+                logOutput.scrollTop = logOutput.scrollHeight;
+            };
+            
+            logEventSource.onerror = () => {
+                document.getElementById('log-output').innerHTML += '<div class="text-red-500">日志连接断开</div>';
+                logEventSource.close();
+            };
+        }
+
+        function clearLogs() {
+            document.getElementById('log-output').innerHTML = '';
+        }
+
+        // 刷新历史
+        async function refreshHistory() {
+            try {
+                const data = await apiRequest('/api/admin/git/history?lines=20');
+                const html = data.commits.map(commit => `
+                    <div class="flex items-start gap-3 p-3 bg-gray-50 rounded hover:bg-gray-100">
+                        <code class="text-blue-600 font-mono text-sm">${commit.hash}</code>
+                        <span class="flex-1">${commit.message}</span>
+                    </div>
+                `).join('');
+                document.getElementById('git-history').innerHTML = html;
+            } catch (e) {
+                console.error('Failed to refresh history:', e);
+            }
+        }
+
+        // 刷新系统信息
+        async function refreshSystem() {
+            try {
+                const data = await apiRequest('/api/admin/system');
+                document.getElementById('sys-uptime').textContent = data.uptime;
+                document.getElementById('sys-memory').textContent = data.memory;
+                document.getElementById('sys-disk').textContent = data.disk;
+                document.getElementById('sys-git-branch').textContent = data.git_branch.trim();
+                document.getElementById('sys-git-status').textContent = data.git_status.trim() || '工作目录干净';
+            } catch (e) {
+                console.error('Failed to refresh system info:', e);
+            }
+        }
+
+        // 自动刷新状态
+        setInterval(refreshStatus, 10000);
+    </script>
+</body>
+</html>
