@@ -189,12 +189,12 @@ function startHeartbeat(sessionId, sock) {
                 return;
             }
             
-            // Try to query connection state (lightweight operation)
-            const state = sock.ws?.readyState;
-            if (state !== 1) { // 1 = OPEN
-                console.log(`[${sessionId}] ⚠️ WebSocket 狀態異常 (${state}), 可能需要重連`);
+            // Check connection state using Baileys' authState
+            if (sock.authState?.creds && session.status === 'connected') {
+                const uptime = Math.floor((Date.now() - session.lastSync.getTime()) / 1000 / 60);
+                console.log(`[${sessionId}] 💓 心跳正常 (運行時間: ${uptime} 分鐘)`);
             } else {
-                console.log(`[${sessionId}] 💓 心跳正常 (運行時間: ${Math.floor((Date.now() - session.lastSync.getTime()) / 1000 / 60)} 分鐘)`);
+                console.log(`[${sessionId}] ⚠️ 連接狀態檢查失敗，可能需要重連`);
             }
         } catch (error) {
             console.error(`[${sessionId}] ❌ 心跳檢測錯誤:`, error.message);
