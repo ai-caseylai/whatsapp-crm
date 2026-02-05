@@ -58,7 +58,15 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // Sessions Manager
-const sessions = new Map(); // sessionId -> { sock, status, qr, userInfo }
+const sessions = new Map(); // sessionId -> { sock, status, qr, userInfo, reconnectAttempts, lastSync }
+
+// Reconnection configuration
+const RECONNECT_CONFIG = {
+    maxAttempts: 10,
+    baseDelay: 3000, // 3 seconds
+    maxDelay: 60000, // 1 minute
+    heartbeatInterval: 30000 // 30 seconds
+};
 
 // Middleware
 app.use(express.json());
@@ -160,6 +168,42 @@ async function saveMessageToSupabase(sessionId, msg, sock) {
 
 // --- Session Logic ---
 
+// Heartbeat to keep connection alive and detect disconnections
+function startHeartbeat(sessionId, sock) {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    
+    // Clear any existing heartbeat
+    if (session.heartbeatTimer) {
+        clearInterval(session.heartbeatTimer);
+    }
+    
+    console.log(`[${sessionId}] 💓 啟動心跳檢測 (每 ${RECONNECT_CONFIG.heartbeatInterval/1000} 秒)`);
+    
+    session.heartbeatTimer = setInterval(async () => {
+        try {
+            // Check if socket is still alive
+            if (!sock || session.status !== 'connected') {
+                console.log(`[${sessionId}] ⚠️ 心跳檢測到連接異常，清除心跳定時器`);
+                clearInterval(session.heartbeatTimer);
+                return;
+            }
+            
+            // Try to query connection state (lightweight operation)
+            const state = sock.ws?.readyState;
+            if (state !== 1) { // 1 = OPEN
+                console.log(`[${sessionId}] ⚠️ WebSocket 狀態異常 (${state}), 可能需要重連`);
+            } else {
+                console.log(`[${sessionId}] 💓 心跳正常 (運行時間: ${Math.floor((Date.now() - session.lastSync.getTime()) / 1000 / 60)} 分鐘)`);
+            }
+        } catch (error) {
+            console.error(`[${sessionId}] ❌ 心跳檢測錯誤:`, error.message);
+        }
+    }, RECONNECT_CONFIG.heartbeatInterval);
+    
+    session.heartbeatTimer.unref(); // Don't keep process alive just for heartbeat
+}
+
 async function startSession(sessionId) {
     if (sessions.has(sessionId) && sessions.get(sessionId).status === 'connected') {
         return;
@@ -250,28 +294,57 @@ async function startSession(sessionId) {
             sendWebhook('status', { sessionId, status: 'disconnected' });
             
             // Log the error detail
-            console.log(`Session ${sessionId} closed. Reason:`, lastDisconnect?.error);
+            const errorCode = (lastDisconnect?.error)?.output?.statusCode;
+            console.log(`[${sessionId}] 連接關閉. 錯誤代碼: ${errorCode}, 原因:`, lastDisconnect?.error?.message);
 
             if (shouldReconnect) {
-                // Add a small delay before reconnecting to avoid loops
-                setTimeout(() => startSession(sessionId), 3000);
+                // Initialize reconnect attempts if not exists
+                if (!session.reconnectAttempts) session.reconnectAttempts = 0;
+                session.reconnectAttempts++;
+                
+                // Check if we've exceeded max attempts
+                if (session.reconnectAttempts > RECONNECT_CONFIG.maxAttempts) {
+                    console.log(`[${sessionId}] ❌ 超過最大重連次數 (${RECONNECT_CONFIG.maxAttempts}), 停止重連`);
+                    session.status = 'failed';
+                    await supabase.from('whatsapp_sessions').update({ status: 'failed' }).eq('session_id', sessionId);
+                    return;
+                }
+                
+                // Calculate delay with exponential backoff
+                const delay = Math.min(
+                    RECONNECT_CONFIG.baseDelay * Math.pow(2, session.reconnectAttempts - 1),
+                    RECONNECT_CONFIG.maxDelay
+                );
+                
+                console.log(`[${sessionId}] 🔄 將在 ${delay/1000} 秒後重連 (第 ${session.reconnectAttempts}/${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
+                
+                setTimeout(() => {
+                    console.log(`[${sessionId}] 開始重連...`);
+                    startSession(sessionId);
+                }, delay);
             } else {
-                console.log(`Session ${sessionId} logged out`);
+                console.log(`[${sessionId}] 已登出，不再重連`);
                 session.status = 'logged_out';
                 session.qr = null;
                 session.userInfo = null;
+                session.reconnectAttempts = 0;
                 await supabase.from('whatsapp_sessions').update({ status: 'logged_out', qr_code: null }).eq('session_id', sessionId);
             }
         } else if (connection === 'open') {
-            console.log(`Session ${sessionId} connected`);
+            console.log(`[${sessionId}] ✅ 連接成功`);
             session.status = 'connected';
             session.qr = null;
+            session.reconnectAttempts = 0; // Reset reconnect counter on successful connection
+            session.lastSync = new Date(); // Record last sync time
             sendWebhook('status', { sessionId, status: 'connected' });
             
             const user = sock.user; 
             session.userInfo = user;
             
             await supabase.from('whatsapp_sessions').update({ status: 'connected', qr_code: null }).eq('session_id', sessionId);
+            
+            // Start heartbeat to keep connection alive
+            startHeartbeat(sessionId, sock);
             
             // 1. Ensure "Self" contact exists for "Note to Self"
             const currentUser = user || state.creds.me;
@@ -1362,6 +1435,68 @@ async function init() {
 
 init();
 
+// Auto-restart disconnected sessions every 5 minutes
+setInterval(async () => {
+    console.log('🔍 檢查所有會話狀態...');
+    
+    for (const [sessionId, session] of sessions.entries()) {
+        if (session.status === 'disconnected' || session.status === 'failed') {
+            console.log(`[${sessionId}] 檢測到斷開的會話，嘗試重新連接...`);
+            
+            // Reset reconnect attempts for periodic check
+            session.reconnectAttempts = 0;
+            
+            try {
+                await startSession(sessionId);
+            } catch (error) {
+                console.error(`[${sessionId}] 自動重連失敗:`, error.message);
+            }
+        }
+    }
+}, 5 * 60 * 1000); // Every 5 minutes
+
+// Handle process termination gracefully
+process.on('SIGINT', async () => {
+    console.log('\n🛑 收到 SIGINT 信號，正在關閉所有連接...');
+    
+    for (const [sessionId, session] of sessions.entries()) {
+        if (session.sock) {
+            try {
+                await session.sock.end();
+                console.log(`[${sessionId}] 已關閉連接`);
+            } catch (error) {
+                console.error(`[${sessionId}] 關閉連接時出錯:`, error.message);
+            }
+        }
+        
+        if (session.heartbeatTimer) {
+            clearInterval(session.heartbeatTimer);
+        }
+    }
+    
+    console.log('✅ 所有連接已關閉');
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    console.log('\n🛑 收到 SIGTERM 信號，正在優雅退出...');
+    process.exit(0);
+});
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+    console.error('❌ 未捕獲的異常:', error);
+    // Don't exit, let PM2 handle restarts
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ 未處理的 Promise 拒絕:', reason);
+    // Don't exit, let PM2 handle restarts
+});
+
 app.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
+    console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
+    console.log(`💓 心跳檢測: 每 ${RECONNECT_CONFIG.heartbeatInterval/1000} 秒`);
+    console.log(`🔍 自動檢查: 每 5 分鐘檢查斷開的會話`);
 });

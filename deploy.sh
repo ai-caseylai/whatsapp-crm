@@ -65,17 +65,25 @@ if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
     fi
 fi
 
-# 重启服务
-echo ""
-echo "🔄 正在重启服务..."
-pm2 restart whatsapp-bot --update-env
+# 检查 ecosystem.config.js 是否存在
+if [ -f "ecosystem.config.js" ]; then
+    echo ""
+    echo "🔄 使用 PM2 配置文件重启所有服务..."
+    pm2 reload ecosystem.config.js --update-env
+    pm2 save
+else
+    # 回退到单独重启
+    echo ""
+    echo "🔄 正在重启服务..."
+    pm2 restart whatsapp-bot --update-env
 
-# 检查是否需要重启管理服务和 Webhook
-if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-    if git diff ${OLD_VERSION}..${NEW_VERSION} --name-only 2>/dev/null | grep -qE "(admin-server\.js|webhook-server\.js)"; then
-        echo "🔄 检测到管理服务或 Webhook 更改，正在重启..."
-        pm2 restart whatsapp-admin --update-env 2>/dev/null || echo "   (管理服务未运行，跳过)"
-        pm2 restart whatsapp-webhook --update-env 2>/dev/null || echo "   (Webhook 服务未运行，跳过)"
+    # 检查是否需要重启管理服务和 Webhook
+    if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+        if git diff ${OLD_VERSION}..${NEW_VERSION} --name-only 2>/dev/null | grep -qE "(admin-server\.js|webhook-server\.js)"; then
+            echo "🔄 检测到管理服务或 Webhook 更改，正在重启..."
+            pm2 restart whatsapp-admin --update-env 2>/dev/null || echo "   (管理服务未运行，跳过)"
+            pm2 restart whatsapp-webhook --update-env 2>/dev/null || echo "   (Webhook 服务未运行，跳过)"
+        fi
     fi
 fi
 
