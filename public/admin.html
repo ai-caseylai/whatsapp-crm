@@ -265,9 +265,26 @@
                 ...options,
                 headers: {
                     ...options.headers,
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/json'
                 }
             });
+            
+            // 检查响应状态
+            if (!res.ok) {
+                const text = await res.text();
+                console.error('API 错误:', res.status, text);
+                throw new Error(`HTTP ${res.status}: ${text.substring(0, 100)}`);
+            }
+            
+            // 检查 Content-Type
+            const contentType = res.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                const text = await res.text();
+                console.error('非 JSON 响应:', text.substring(0, 200));
+                throw new Error('服务器返回了非 JSON 响应');
+            }
+            
             return await res.json();
         }
 
