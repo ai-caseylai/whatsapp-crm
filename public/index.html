@@ -608,7 +608,33 @@
             let content = msg.content || '';
             let type = msg.message_type;
             let attachmentPath = msg.attachment_path;
-            let mediaPath = msg.media_path; // 新增：直接使用 media_path
+            let mediaPath = msg.media_path; // 直接使用 media_path
+
+            // 嘗試從 full_message_json 提取真實內容（如果 content 是空的或者是消息類型）
+            if (!content || ['conversation', 'extendedTextMessage', 'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage'].includes(content)) {
+                const realMsg = msg.full_message_json?.message;
+                if (realMsg) {
+                    // Unwrap message layers
+                    let unwrapped = realMsg;
+                    if (realMsg.viewOnceMessage?.message) unwrapped = realMsg.viewOnceMessage.message;
+                    if (realMsg.viewOnceMessageV2?.message) unwrapped = realMsg.viewOnceMessageV2.message;
+                    if (realMsg.ephemeralMessage?.message) unwrapped = realMsg.ephemeralMessage.message;
+                    if (realMsg.documentWithCaptionMessage?.message) unwrapped = realMsg.documentWithCaptionMessage.message;
+                    
+                    // Extract text content
+                    if (unwrapped.conversation) {
+                        content = unwrapped.conversation;
+                    } else if (unwrapped.extendedTextMessage?.text) {
+                        content = unwrapped.extendedTextMessage.text;
+                    } else if (unwrapped.imageMessage?.caption) {
+                        content = unwrapped.imageMessage.caption;
+                    } else if (unwrapped.videoMessage?.caption) {
+                        content = unwrapped.videoMessage.caption;
+                    } else if (unwrapped.documentMessage?.fileName) {
+                        content = unwrapped.documentMessage.fileName;
+                    }
+                }
+            }
 
             // 檢測 Emoji 和 Reaction 消息
             const isEmojiOnly = content && /^[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F1E0}-\u{1F1FF}]+$/u.test(content.trim());
@@ -616,22 +642,22 @@
 
             // Display Logic
             let displayContent = content;
-            if (displayContent === 'conversation' || displayContent === 'extendedTextMessage') {
-                 if (!displayContent || displayContent === 'conversation' || displayContent === 'extendedTextMessage') {
-                      const m = msg.full_message_json?.message || {};
-                      if (m.contactMessage) displayContent = '[聯絡人卡片]';
-                      else if (m.locationMessage) displayContent = '[位置資訊]';
-                      else if (m.pollCreationMessageV3) displayContent = '[投票]'; 
-                      else displayContent = '(無內容)';
-                 }
+            
+            // 只有在 content 仍然是消息類型名稱時才替換為標籤
+            if (!displayContent || displayContent === 'conversation' || displayContent === 'extendedTextMessage') {
+                const m = msg.full_message_json?.message || {};
+                if (m.contactMessage) displayContent = '[聯絡人卡片]';
+                else if (m.locationMessage) displayContent = '[位置資訊]';
+                else if (m.pollCreationMessageV3) displayContent = '[投票]'; 
+                else if (!displayContent) displayContent = '';  // 保持空白，稍後處理
             } else if (displayContent === 'stickerMessage') {
-                displayContent = '[貼圖]';
-            } else if (displayContent === 'audioMessage') {
-                displayContent = '[語音]';
+                displayContent = '';  // 貼圖不需要文字
+            } else if (displayContent === 'audioMessage' || displayContent === 'pttMessage') {
+                displayContent = '';  // 語音不需要文字（有播放器）
             } else if (displayContent === 'imageMessage') {
-                displayContent = '[圖片]';
+                displayContent = '';  // 圖片不需要文字（會顯示圖片）
             } else if (displayContent === 'videoMessage') {
-                displayContent = '[影片]';
+                displayContent = '';  // 視頻不需要文字（會顯示視頻）
             } else if (displayContent === 'pollCreationMessageV3') {
                 displayContent = '[投票]';
             }
