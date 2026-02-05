@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp CRM - GitHub Webhook 配置</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 40px;
+        }
+        .step {
+            margin-bottom: 40px;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            border-left: 5px solid #667eea;
+        }
+        .step h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+        .step-number {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 40px;
+            font-weight: bold;
+            margin-right: 15px;
+        }
+        .config-box {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            position: relative;
+        }
+        .config-box .label {
+            color: #cbd5e0;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .config-box .value {
+            color: #68d391;
+            font-size: 1.1em;
+            word-break: break-all;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .copy-btn:hover {
+            background: #5568d3;
+        }
+        .copy-btn:active {
+            transform: scale(0.95);
+        }
+        .button-link {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: bold;
+            margin: 10px 5px;
+            transition: all 0.3s;
+        }
+        .button-link:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .success-icon {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #48bb78;
+            border-radius: 50%;
+            color: white;
+            text-align: center;
+            line-height: 30px;
+            margin-right: 10px;
+        }
+        .warning {
+            background: #fff5f5;
+            border-left: 5px solid #f56565;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .warning h3 {
+            color: #c53030;
+            margin-bottom: 10px;
+        }
+        ul {
+            margin-left: 30px;
+            margin-top: 15px;
+        }
+        li {
+            margin-bottom: 10px;
+        }
+        .footer {
+            background: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 GitHub Webhook 配置</h1>
+            <p>自动部署 WhatsApp CRM 系统</p>
+        </div>
+
+        <div class="content">
+            <div class="step">
+                <h2><span class="step-number">1</span>打开 GitHub Webhook 设置</h2>
+                <p>点击下面的按钮直接跳转到 Webhook 配置页面：</p>
+                <a href="https://github.com/ai-caseylai/whatsapp-crm/settings/hooks/new" class="button-link" target="_blank">
+                    📝 打开 GitHub Webhook 设置
+                </a>
+            </div>
+
+            <div class="step">
+                <h2><span class="step-number">2</span>填写 Webhook 配置</h2>
+                
+                <h3 style="margin-top: 20px; color: #2d3748;">📌 Payload URL（必填）</h3>
+                <div class="config-box">
+                    <div class="label">URL:</div>
+                    <div class="value" id="webhook-url">http://whatsapp-crm.techforliving.app/webhook/deploy</div>
+                    <button class="copy-btn" onclick="copyText('webhook-url')">📋 复制</button>
+                </div>
+
+                <h3 style="margin-top: 20px; color: #2d3748;">📦 Content type（必填）</h3>
+                <div class="config-box">
+                    <div class="label">选择:</div>
+                    <div class="value">application/json</div>
+                </div>
+
+                <h3 style="margin-top: 20px; color: #2d3748;">🔐 Secret（推荐）</h3>
+                <div class="config-box">
+                    <div class="label">密钥:</div>
+                    <div class="value" id="webhook-secret">5255888ad9d96bab0296a5a2eb882d5ea62656f44101d9794ff083c54e75953a</div>
+                    <button class="copy-btn" onclick="copyText('webhook-secret')">📋 复制</button>
+                </div>
+
+                <h3 style="margin-top: 20px; color: #2d3748;">🎯 触发事件</h3>
+                <div class="config-box">
+                    <div class="label">选择:</div>
+                    <div class="value">Just the push event（只选择推送事件）</div>
+                </div>
+
+                <h3 style="margin-top: 20px; color: #2d3748;">✅ 激活状态</h3>
+                <div class="config-box">
+                    <div class="label">确保勾选:</div>
+                    <div class="value">Active（激活）</div>
+                </div>
+            </div>
+
+            <div class="step">
+                <h2><span class="step-number">3</span>保存并测试</h2>
+                <ul>
+                    <li>点击页面底部的 <strong>"Add webhook"</strong> 按钮</li>
+                    <li>GitHub 会自动发送一个 ping 测试</li>
+                    <li>查看是否有绿色的勾号 ✅</li>
+                </ul>
+            </div>
+
+            <div class="step">
+                <h2><span class="step-number">4</span>测试自动部署</h2>
+                <p>在本地修改代码并推送：</p>
+                <div class="config-box">
+                    <div class="value">
+                        $ cd /Users/apple/Desktop/development/whatsapp-crm<br>
+                        $ echo "# Test" >> README.md<br>
+                        $ git add README.md<br>
+                        $ git commit -m "test: 测试自动部署"<br>
+                        $ git push origin main
+                    </div>
+                </div>
+                <p style="margin-top: 15px;">然后查看服务器日志：</p>
+                <div class="config-box">
+                    <div class="value">
+                        $ ssh whatsapp-crm<br>
+                        $ pm2 logs whatsapp-webhook
+                    </div>
+                </div>
+            </div>
+
+            <div class="warning">
+                <h3>⚠️ 重要提示</h3>
+                <ul>
+                    <li>请妥善保管 Secret 密钥，不要泄露给他人</li>
+                    <li>首次配置后请务必测试一次</li>
+                    <li>如果遇到问题，查看详细文档：<code>GITHUB_WEBHOOK_配置.md</code></li>
+                </ul>
+            </div>
+
+            <div style="text-align: center; margin-top: 40px;">
+                <h3 style="color: #48bb78; margin-bottom: 20px;">
+                    <span class="success-icon">✓</span>
+                    配置完成后你的工作流程
+                </h3>
+                <div style="font-size: 1.2em; color: #666;">
+                    修改代码 → Git Push → 🎉 自动部署！
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p><strong>WhatsApp CRM 自动部署系统</strong></p>
+            <p style="margin-top: 10px;">© 2026 - Powered by GitHub Webhooks</p>
+        </div>
+    </div>
+
+    <script>
+        function copyText(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ 已复制';
+                btn.style.background = '#48bb78';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '#667eea';
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
