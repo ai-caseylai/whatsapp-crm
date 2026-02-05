@@ -182,16 +182,17 @@ async function startSession(sessionId) {
         auth: state,
         printQRInTerminal: false,
         browser: ['WhatsApp CRM', 'Chrome', '1.0.0'],
-        connectTimeoutMs: 120000, // Increased to 2 minutes for large history
-        keepAliveIntervalMs: 20000, 
+        connectTimeoutMs: 300000, // Increased to 5 minutes for large history
+        keepAliveIntervalMs: 30000, 
         syncFullHistory: true, 
-        retryRequestDelayMs: 5000, // Slower retries
-        defaultQueryTimeoutMs: 120000, // Increased timeout
+        retryRequestDelayMs: 3000, 
+        defaultQueryTimeoutMs: 300000, // Increased timeout to 5 minutes
         fireInitQueries: true,
         generateHighQualityLinkPreview: true,
         markOnlineOnConnect: true,
         emitOwnEvents: true, // Emit events for own messages too
         shouldSyncHistoryMessage: () => true, // Always sync history messages
+        shouldIgnoreJid: () => false, // Don't ignore any JIDs during sync
         getMessage: async (key) => {
             // Try to get message from DB
             const { data } = await supabase
@@ -391,8 +392,18 @@ async function startSession(sessionId) {
         }
     });
 
+    // Track total messages synced
+    if (!sessions.get(sessionId).totalSyncedMessages) {
+        sessions.get(sessionId).totalSyncedMessages = 0;
+    }
+
     sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest }) => {
-        console.log(`[${sessionId}] [History] Received ${chats.length} chats, ${contacts.length} contacts, ${messages.length} messages (isLatest: ${isLatest})`);
+        console.log(`[${sessionId}] [History Sync] Batch received:`);
+        console.log(`  - Chats: ${chats.length}`);
+        console.log(`  - Contacts: ${contacts.length}`);
+        console.log(`  - Messages: ${messages.length}`);
+        console.log(`  - isLatest: ${isLatest}`);
+        console.log(`  - Total synced so far: ${sessions.get(sessionId).totalSyncedMessages || 0}`);
         
         // 1. Save Chats info to contacts
         if (chats.length > 0) {
@@ -444,7 +455,9 @@ async function startSession(sessionId) {
                     console.error(`[${sessionId}] Error saving history batch:`, error);
                 } else {
                     processedCount += validMessages.length;
-                    console.log(`[${sessionId}] Saved ${processedCount}/${messages.length} history messages...`);
+                    sessions.get(sessionId).totalSyncedMessages = (sessions.get(sessionId).totalSyncedMessages || 0) + validMessages.length;
+                    console.log(`[${sessionId}] Saved ${processedCount}/${messages.length} messages in this batch`);
+                    console.log(`[${sessionId}] Total messages synced: ${sessions.get(sessionId).totalSyncedMessages}`);
                 }
 
                 // Update contact timestamps for history too
@@ -479,9 +492,12 @@ async function startSession(sessionId) {
             }
         }
         
-        console.log(`[${sessionId}] ✅ History sync completed! Processed ${processedCount} messages.`);
+        console.log(`[${sessionId}] ✅ History sync batch completed! Processed ${processedCount} messages in this batch.`);
+        console.log(`[${sessionId}] Total messages synced across all batches: ${sessions.get(sessionId).totalSyncedMessages}`);
         if (isLatest) {
-            console.log(`[${sessionId}] 🎉 All history has been synced!`);
+            console.log(`[${sessionId}] 🎉 All history has been synced! (isLatest=true)`);
+        } else {
+            console.log(`[${sessionId}] ⏳ More history batches may be coming... (isLatest=false)`);
         }
     });
 
@@ -905,6 +921,43 @@ app.post('/api/session/:id/logout', async (req, res) => {
     
     await supabase.from('whatsapp_sessions').update({ status: 'logged_out', qr_code: null }).eq('session_id', sessionId);
     res.json({ success: true });
+});
+
+// Restart Session (to trigger re-sync)
+app.post('/api/session/:id/restart', async (req, res) => {
+    const sessionId = req.params.id;
+    const mem = sessions.get(sessionId);
+    
+    if (mem && mem.sock) {
+        try {
+            // Close existing connection
+            await mem.sock.end();
+        } catch(e) {
+            console.error(`[${sessionId}] Error closing socket:`, e.message);
+        }
+        
+        // Remove from sessions map
+        sessions.delete(sessionId);
+        
+        // Wait a moment before reconnecting
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        try {
+            // Reconnect
+            await connectToWhatsApp(sessionId);
+            res.json({ success: true, message: 'Session restarted, history sync will begin automatically.' });
+        } catch(e) {
+            res.status(500).json({ error: `Failed to restart: ${e.message}` });
+        }
+    } else {
+        // If not connected, just try to connect
+        try {
+            await connectToWhatsApp(sessionId);
+            res.json({ success: true, message: 'Session started, history sync will begin automatically.' });
+        } catch(e) {
+            res.status(500).json({ error: `Failed to start: ${e.message}` });
+        }
+    }
 });
 
 // Get Contacts (Protected by Session ID only)
