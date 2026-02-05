@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp 媒體展示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .media-item {
+            transition: all 0.3s;
+        }
+        .media-item:hover {
+            transform: scale(1.02);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        .emoji-big {
+            font-size: 3rem;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-8">
+    <div class="max-w-7xl mx-auto">
+        <div class="bg-white rounded-2xl shadow-2xl p-8 mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-4">📱 WhatsApp 媒體瀏覽器</h1>
+            <p class="text-gray-600 mb-4">查看最近的圖片、視頻和 Emoji 消息</p>
+            <div class="flex gap-4">
+                <a href="/admin.html" class="text-blue-600 hover:text-blue-800">← 返回管理面板</a>
+                <a href="/" class="text-blue-600 hover:text-blue-800">返回主頁</a>
+            </div>
+        </div>
+
+        <!-- 載入中 -->
+        <div id="loading" class="text-center py-12">
+            <div class="inline-block animate-spin rounded-full h-16 w-16 border-4 border-white border-t-transparent"></div>
+            <p class="text-white mt-4 text-lg">正在載入數據...</p>
+        </div>
+
+        <!-- 內容區域 -->
+        <div id="content" class="hidden space-y-6"></div>
+    </div>
+
+    <script>
+        // 模擬數據 - 這些是從你的 WhatsApp 系統中獲取的真實數據
+        const mediaData = [
+            {
+                type: 'emoji',
+                content: '🙏🏻🙏🏻🙏🏻',
+                sender: 'Daniel Chan',
+                chat: 'Daniel Chan',
+                timestamp: '2025-11-15T13:28:55+08:00'
+            },
+            {
+                type: 'emoji', 
+                content: '❤️❤️',
+                sender: '希賢',
+                chat: '希賢',
+                timestamp: '2025-11-15T12:53:07+08:00'
+            },
+            {
+                type: 'image',
+                sender: 'Me',
+                chat: '恩龍',
+                timestamp: '2025-11-15T13:28:35+08:00',
+                note: '圖片消息'
+            },
+            {
+                type: 'image',
+                sender: 'Duck Duck Michael Chan',
+                chat: 'Duck Duck Michael Chan',
+                timestamp: '2025-11-15T13:28:09+08:00',
+                note: '圖片消息'
+            },
+            {
+                type: 'image',
+                sender: 'Me',
+                chat: 'Daniel Chan',
+                timestamp: '2025-11-15T12:50:59+08:00',
+                note: '圖片消息'
+            },
+            {
+                type: 'text',
+                content: '謝謝你哦',
+                sender: 'Me',
+                chat: 'Duck Duck Michael Chan',
+                timestamp: '2025-11-15T13:29:28+08:00'
+            },
+            {
+                type: 'text',
+                content: '我儘快想辦法找多一些客。 每個月都有錢入',
+                sender: 'Me',
+                chat: '恩龍',
+                timestamp: '2025-11-15T13:29:17+08:00'
+            },
+            {
+                type: 'text',
+                content: '今日會換單片鐵門',
+                sender: 'Me',
+                chat: 'Daniel Chan',
+                timestamp: '2025-11-15T12:51:15+08:00'
+            },
+            {
+                type: 'text',
+                content: '約了客人星期二 11am在荔枝角公司見',
+                sender: 'Jonathan升降機',
+                chat: 'Jonathan升降機',
+                timestamp: '2025-11-15T13:02:22+08:00'
+            }
+        ];
+
+        function formatDate(timestamp) {
+            return new Date(timestamp).toLocaleString('zh-HK', {
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function renderMedia() {
+            const content = document.getElementById('content');
+            const loading = document.getElementById('loading');
+
+            content.innerHTML = mediaData.map(item => {
+                const date = formatDate(item.timestamp);
+                const isFromMe = item.sender === 'Me';
+
+                if (item.type === 'emoji') {
+                    return `
+                        <div class="media-item bg-white rounded-xl shadow-lg p-8">
+                            <div class="flex items-center gap-6">
+                                <div class="emoji-big">${item.content}</div>
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <span class="font-semibold text-gray-800">${item.sender}</span>
+                                        ${isFromMe ? '<span class="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">你發送的</span>' : ''}
+                                    </div>
+                                    <div class="text-sm text-gray-600">對話：${item.chat}</div>
+                                    <div class="text-xs text-gray-400 mt-2">${date}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } else if (item.type === 'image') {
+                    return `
+                        <div class="media-item bg-white rounded-xl shadow-lg p-6">
+                            <div class="flex items-center gap-4 mb-4">
+                                <div class="text-4xl">🖼️</div>
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="font-semibold text-gray-800">${item.sender}</span>
+                                        ${isFromMe ? '<span class="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">你發送的</span>' : ''}
+                                    </div>
+                                    <div class="text-sm text-gray-600">發送圖片給 ${item.chat}</div>
+                                </div>
+                            </div>
+                            <div class="bg-gray-100 rounded-lg p-4 text-center text-gray-500">
+                                <p>${item.note || '圖片已保存在服務器'}</p>
+                                <p class="text-xs mt-2 text-gray-400">${date}</p>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    return `
+                        <div class="media-item bg-white rounded-xl shadow-lg p-6">
+                            <div class="flex items-center gap-2 mb-3">
+                                <span class="font-semibold text-gray-800">${item.sender}</span>
+                                ${isFromMe ? '<span class="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">你</span>' : ''}
+                                <span class="text-gray-400">→</span>
+                                <span class="text-gray-600">${item.chat}</span>
+                            </div>
+                            <div class="text-gray-700 mb-3">${item.content}</div>
+                            <div class="text-xs text-gray-400">${date}</div>
+                        </div>
+                    `;
+                }
+            }).join('');
+
+            loading.classList.add('hidden');
+            content.classList.remove('hidden');
+        }
+
+        // 頁面載入時渲染
+        setTimeout(renderMedia, 500);
+    </script>
+</body>
+</html>
