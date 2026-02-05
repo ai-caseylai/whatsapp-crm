@@ -608,6 +608,11 @@
             let content = msg.content || '';
             let type = msg.message_type;
             let attachmentPath = msg.attachment_path;
+            let mediaPath = msg.media_path; // 新增：直接使用 media_path
+
+            // 檢測 Emoji 和 Reaction 消息
+            const isEmojiOnly = content && /^[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F1E0}-\u{1F1FF}]+$/u.test(content.trim());
+            const isReaction = content && content.includes('(回應訊息)');
 
             // Display Logic
             let displayContent = content;
@@ -633,24 +638,48 @@
 
             let attachmentHtml = '';
             
-            if (attachmentPath) {
-                 const mediaPath = `/media/${attachmentPath}`;
+            // 優先使用 media_path，其次使用 attachment_path
+            const finalMediaPath = mediaPath || (attachmentPath ? `/media/${attachmentPath}` : null);
+            
+            if (finalMediaPath) {
                  if (['imageMessage', 'image'].includes(type)) {
-                     attachmentHtml = `<img src="${mediaPath}" class="mt-2 rounded-lg max-w-xs cursor-pointer shadow-sm hover:opacity-90 transition" onclick="window.open('${mediaPath}', '_blank')" />`;
+                     attachmentHtml = `
+                         <div class="mt-2">
+                             <img src="${finalMediaPath}" 
+                                  class="rounded-lg max-w-sm max-h-96 cursor-pointer shadow-md hover:shadow-xl transition-all hover:scale-105" 
+                                  onclick="window.open('${finalMediaPath}', '_blank')"
+                                  onerror="this.parentElement.innerHTML='<div class=\\'text-gray-400 text-sm\\'>圖片載入失敗</div>'" />
+                         </div>`;
                      if (!content || content === 'imageMessage') displayContent = '';
                  } else if (['videoMessage', 'video'].includes(type)) {
-                     attachmentHtml = `<video controls src="${mediaPath}" class="mt-2 rounded-lg max-w-xs shadow-sm"></video>`;
+                     attachmentHtml = `
+                         <div class="mt-2">
+                             <video controls src="${finalMediaPath}" 
+                                    class="rounded-lg max-w-sm max-h-96 shadow-md"
+                                    onerror="this.parentElement.innerHTML='<div class=\\'text-gray-400 text-sm\\'>視頻載入失敗</div>'">
+                             </video>
+                         </div>`;
                      if (!content || content === 'videoMessage') displayContent = '';
-                 } else if (['audioMessage', 'audio'].includes(type)) {
-                     attachmentHtml = `<audio controls src="${mediaPath}" class="mt-2 w-64"></audio>`;
-                     if (!content || content === 'audioMessage') displayContent = '';
+                 } else if (['audioMessage', 'audio', 'pttMessage'].includes(type)) {
+                     attachmentHtml = `
+                         <div class="mt-2 flex items-center gap-2 bg-white/30 p-2 rounded-lg">
+                             <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15.536a5 5 0 001.414 1.414m2.828-9.9a9 9 0 000 12.728M12 18a6 6 0 100-12 6 6 0 000 12z"/>
+                             </svg>
+                             <audio controls src="${finalMediaPath}" class="flex-1 h-8"></audio>
+                         </div>`;
+                     if (!content || content === 'audioMessage' || content === 'pttMessage') displayContent = '';
                  } else if (['stickerMessage', 'sticker'].includes(type)) {
-                     attachmentHtml = `<img src="${mediaPath}" class="mt-2 w-32 h-32 object-contain" />`;
+                     attachmentHtml = `
+                         <div class="mt-2">
+                             <img src="${finalMediaPath}" class="w-36 h-36 object-contain" 
+                                  onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22 font-size=%2240%22>😊</text></svg>'" />
+                         </div>`;
                      displayContent = '';
                  } else {
                      const fileName = content || '附件';
                      attachmentHtml = `
-                        <a href="${mediaPath}" target="_blank" class="block mt-2 bg-white/50 p-2 rounded border border-gray-200 hover:bg-white transition flex items-center gap-2 max-w-xs">
+                        <a href="${finalMediaPath}" target="_blank" class="block mt-2 bg-white/50 p-2 rounded border border-gray-200 hover:bg-white transition flex items-center gap-2 max-w-xs">
                             <div class="bg-gray-200 p-2 rounded text-gray-600">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                             </div>
@@ -665,6 +694,20 @@
 
             if (!displayContent && !attachmentHtml) {
                 displayContent = '<span class="italic text-gray-400">無法顯示此訊息格式</span>';
+            }
+
+            // 特殊處理 Emoji 和 Reaction
+            if (isEmojiOnly || isReaction) {
+                const emojiSize = isReaction ? 'text-4xl' : 'text-5xl';
+                const emojiText = isReaction ? content.replace('(回應訊息)', '').trim() : content;
+                return `
+                    <div class="chat-message rounded-lg mb-2 bg-transparent shadow-none p-2 ${isFromMe ? 'self-end' : 'self-start'}">
+                        ${msg.push_name && !isFromMe ? `<div class="text-xs text-orange-600 font-bold mb-1">${msg.push_name}</div>` : ''}
+                        <div class="${emojiSize} leading-none">${emojiText}</div>
+                        ${isReaction ? '<div class="text-xs text-gray-500 mt-1">反應</div>' : ''}
+                        <div class="text-[10px] mt-1 text-gray-500 bg-white/50 px-1 rounded">${date}</div>
+                    </div>
+                `;
             }
 
             const isSticker = ['stickerMessage', 'sticker'].includes(type);
