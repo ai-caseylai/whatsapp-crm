@@ -904,6 +904,51 @@
             `;
         }
 
+        // WebSocket connection for real-time updates
+        let ws = null;
+        
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            const wsUrl = `${protocol}//${host}`;
+            
+            console.log('🔌 連接 WebSocket:', wsUrl);
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('✅ WebSocket 已連接');
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('📨 收到 WebSocket 消息:', data);
+                    
+                    if (data.type === 'new_message') {
+                        // If the message is for the currently open chat, refresh it
+                        if (currentChatId === data.chatId && currentSessionId === data.sessionId) {
+                            console.log('🔄 刷新當前聊天:', data.chatId);
+                            refreshMessages(data.chatId);
+                        }
+                        
+                        // Always refresh contacts list to update last message time
+                        loadContacts();
+                    }
+                } catch (e) {
+                    console.error('解析 WebSocket 消息失敗:', e);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('❌ WebSocket 錯誤:', error);
+            };
+            
+            ws.onclose = () => {
+                console.log('❌ WebSocket 已斷開，5秒後重連...');
+                setTimeout(connectWebSocket, 5000);
+            };
+        }
+        
         // Start polling
         startSession(); // Auto-start on load
         setInterval(checkStatus, 3000); // Check status every 3 seconds
@@ -914,12 +959,8 @@
             loadContacts();
         }, 10000); // Refresh contacts every 10 seconds
         
-        // Auto-refresh messages for the currently open chat
-        setInterval(() => {
-            if (currentChatId && !document.getElementById('qr-container').classList.contains('hidden')) {
-                refreshMessages(currentChatId);
-            }
-        }, 5000); // Refresh messages every 5 seconds
+        // Connect WebSocket for real-time message updates
+        connectWebSocket();
 
         // --- Marketing Logic ---
         let selectedContacts = new Set();

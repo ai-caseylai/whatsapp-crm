@@ -2,6 +2,8 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, download
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
 const qrcode = require('qrcode');
 const mime = require('mime-types');
 const multer = require('multer'); // Import multer
@@ -739,6 +741,11 @@ async function startSession(sessionId) {
                 if (type === 'notify') {
                     validMessages.forEach(m => {
                         sendWebhook('message', { sessionId, message: m });
+                        
+                        // Broadcast via WebSocket for real-time updates
+                        if (global.broadcastMessage) {
+                            global.broadcastMessage(sessionId, m.remote_jid, m);
+                        }
                     });
                 }
             }
@@ -1753,9 +1760,51 @@ process.on('unhandledRejection', (reason, promise) => {
     // Don't exit, let PM2 handle restarts
 });
 
-app.listen(port, () => {
+// Create HTTP server
+const server = http.createServer(app);
+
+// Create WebSocket server
+const wss = new WebSocket.Server({ server });
+
+// WebSocket connection handler
+wss.on('connection', (ws, req) => {
+    console.log('🔌 新的 WebSocket 連接');
+    
+    // Send initial connection success message
+    ws.send(JSON.stringify({ type: 'connected', message: '已連接到 WebSocket 服務器' }));
+    
+    ws.on('close', () => {
+        console.log('❌ WebSocket 連接關閉');
+    });
+    
+    ws.on('error', (error) => {
+        console.error('❌ WebSocket 錯誤:', error);
+    });
+});
+
+// Broadcast function to send messages to all connected clients
+function broadcastMessage(sessionId, chatId, message) {
+    const data = JSON.stringify({
+        type: 'new_message',
+        sessionId,
+        chatId,
+        message
+    });
+    
+    wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(data);
+        }
+    });
+}
+
+// Make broadcastMessage available globally
+global.broadcastMessage = broadcastMessage;
+
+server.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
     console.log(`💓 心跳檢測: 每 ${RECONNECT_CONFIG.heartbeatInterval/1000} 秒`);
     console.log(`🔍 自動檢查: 每 5 分鐘檢查斷開的會話`);
+    console.log(`🔌 WebSocket 服務器已啟動`);
 });
