@@ -1239,6 +1239,22 @@ app.post('/api/session/:id/restart', async (req, res) => {
     }
 });
 
+// Sync recent messages by restarting the session (triggers history sync)
+app.post('/api/session/:id/sync-recent', async (req, res) => {
+    const sessionId = req.params.id;
+    
+    // Note: Due to WhatsApp API limitations, the most reliable way to sync
+    // historical messages is to restart the session, which triggers the
+    // messaging-history.set event. However, WhatsApp typically only sends
+    // history once per device ID, so this may not retrieve additional messages.
+    
+    res.json({ 
+        success: false,
+        message: '由於 WhatsApp API 限制，無法主動拉取歷史消息。請使用「強制同步」功能（需要重新掃描 QR 碼）來獲取完整歷史。',
+        recommendation: '點擊網頁上的「強制同步」按鈕，重新登入後可以獲取完整的歷史消息。'
+    });
+});
+
 // Get Contacts (Protected by Session ID only) with last message time
 app.get('/api/session/:id/contacts', async (req, res) => {
     const sessionId = req.params.id;
