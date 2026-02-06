@@ -292,11 +292,21 @@ async function startSession(sessionId) {
         const session = sessions.get(sessionId);
         if (!session) return;
 
+        // 🆕 只有在未登录状态下才显示二维码
+        // 如果已经登录或正在同步，不应该再显示二维码
         if (qr) {
-            session.status = 'qr';
-            session.qr = await qrcode.toDataURL(qr);
-            await supabase.from('whatsapp_sessions').update({ status: 'qr', qr_code: session.qr }).eq('session_id', sessionId);
-            sendWebhook('qr', { sessionId, qr: session.qr });
+            // 检查是否已经登录（有 userInfo 或状态为 connected）
+            const isLoggedIn = session.userInfo || session.status === 'connected';
+            
+            if (!isLoggedIn) {
+                console.log(`[${sessionId}] 📱 生成二維碼供掃描登入`);
+                session.status = 'qr';
+                session.qr = await qrcode.toDataURL(qr);
+                await supabase.from('whatsapp_sessions').update({ status: 'qr', qr_code: session.qr }).eq('session_id', sessionId);
+                sendWebhook('qr', { sessionId, qr: session.qr });
+            } else {
+                console.log(`[${sessionId}] ⏭️  已登入，忽略新的二維碼請求`);
+            }
         }
 
         if (connection === 'close') {
