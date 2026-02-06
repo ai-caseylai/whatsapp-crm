@@ -336,11 +336,40 @@ async function startSession(sessionId) {
                 }, delay);
             } else {
                 console.log(`[${sessionId}] 已登出，不再重連`);
+                
+                // 🆕 自动清理失效的会话数据
+                console.log(`[${sessionId}] 🗑️  自動清理失效的會話數據...`);
+                
+                try {
+                    // 删除会话数据
+                    await supabase.from('whatsapp_sessions').delete().eq('session_id', sessionId);
+                    console.log(`[${sessionId}] ✅ 已刪除會話記錄`);
+                    
+                    // 删除联系人数据（可选）
+                    const { error: contactError } = await supabase.from('whatsapp_contacts').delete().eq('session_id', sessionId);
+                    if (contactError) {
+                        console.log(`[${sessionId}] ⚠️  聯繫人數據清理跳過: ${contactError.message}`);
+                    } else {
+                        console.log(`[${sessionId}] ✅ 已刪除聯繫人數據`);
+                    }
+                    
+                    // 删除消息数据（可选，谨慎使用）
+                    // 注释掉以保留历史消息
+                    // const { error: msgError } = await supabase.from('whatsapp_messages').delete().eq('session_id', sessionId);
+                    // console.log(`[${sessionId}] ✅ 已刪除消息數據`);
+                    
+                } catch (cleanupError) {
+                    console.error(`[${sessionId}] ❌ 清理失效會話時出錯:`, cleanupError.message);
+                }
+                
+                // 从内存中删除
                 session.status = 'logged_out';
                 session.qr = null;
                 session.userInfo = null;
                 session.reconnectAttempts = 0;
-                await supabase.from('whatsapp_sessions').update({ status: 'logged_out', qr_code: null }).eq('session_id', sessionId);
+                sessions.delete(sessionId);
+                
+                console.log(`[${sessionId}] 🎯 失效會話已完全清理，下次啟動將創建新會話`);
             }
         } else if (connection === 'open') {
             console.log(`[${sessionId}] ✅ 連接成功`);
@@ -2885,25 +2914,79 @@ async function init() {
         .select('*')
         .order('updated_at', { ascending: false }); // 按最新更新时间排序
     
+    // 🆕 自动清理失效的会话
     if (sessionsData && sessionsData.length > 0) {
+        console.log(`🔍 檢查並清理失效的會話...`);
+        
+        const invalidSessions = sessionsData.filter(s => {
+            // 清理已登出的会话
+            if (s.status === 'logged_out') return true;
+            
+            // 清理失败的会话
+            if (s.status === 'failed') return true;
+            
+            // 清理长时间断开的会话（超过 7 天）
+            if (s.status === 'disconnected') {
+                const lastUpdate = new Date(s.updated_at);
+                const daysSinceUpdate = (Date.now() - lastUpdate.getTime()) / (1000 * 60 * 60 * 24);
+                if (daysSinceUpdate > 7) return true;
+            }
+            
+            return false;
+        });
+        
+        if (invalidSessions.length > 0) {
+            console.log(`🗑️  發現 ${invalidSessions.length} 個失效的會話，正在清理...`);
+            
+            for (const invalidSession of invalidSessions) {
+                try {
+                    console.log(`   - 清理會話: ${invalidSession.session_id} (狀態: ${invalidSession.status})`);
+                    
+                    // 删除会话记录
+                    await supabase.from('whatsapp_sessions').delete().eq('session_id', invalidSession.session_id);
+                    
+                    // 删除联系人数据
+                    await supabase.from('whatsapp_contacts').delete().eq('session_id', invalidSession.session_id);
+                    
+                    // 注：保留消息数据作为历史记录
+                    
+                    console.log(`   ✅ 已清理: ${invalidSession.session_id}`);
+                } catch (cleanupError) {
+                    console.error(`   ❌ 清理 ${invalidSession.session_id} 時出錯:`, cleanupError.message);
+                }
+            }
+            
+            console.log(`✅ 失效會話清理完成`);
+        } else {
+            console.log(`✅ 沒有需要清理的失效會話`);
+        }
+    }
+    
+    // 重新获取有效的会话列表
+    const { data: validSessions } = await supabase
+        .from('whatsapp_sessions')
+        .select('*')
+        .order('updated_at', { ascending: false });
+    
+    if (validSessions && validSessions.length > 0) {
         // 🔧 只恢复最新的一个 session，避免多个连接冲突
-        const latestSession = sessionsData.find(s => 
+        const latestSession = validSessions.find(s => 
             s.status === 'connected' || s.status === 'initializing'
         );
         
         if (latestSession) {
             try {
-                console.log(`✅ 恢复最新的 session: ${latestSession.session_id}`);
+                console.log(`✅ 恢復最新的 session: ${latestSession.session_id}`);
                 await startSession(latestSession.session_id);
                 
                 // 清理其他旧的 session 状态（但不删除记录）
-                const otherSessions = sessionsData.filter(s => 
+                const otherSessions = validSessions.filter(s => 
                     s.session_id !== latestSession.session_id && 
                     (s.status === 'connected' || s.status === 'initializing')
                 );
                 
                 if (otherSessions.length > 0) {
-                    console.log(`🧹 清理 ${otherSessions.length} 个旧 session 的状态...`);
+                    console.log(`🧹 清理 ${otherSessions.length} 個舊 session 的狀態...`);
                     for (const oldSession of otherSessions) {
                         await supabase
                             .from('whatsapp_sessions')
@@ -2913,13 +2996,13 @@ async function init() {
                     }
                 }
             } catch (e) {
-                console.error(`❌ 恢复 session ${latestSession.session_id} 失败:`, e);
+                console.error(`❌ 恢復 session ${latestSession.session_id} 失敗:`, e);
             }
         } else {
-            console.log('ℹ️ 没有找到需要恢复的 session');
+            console.log('ℹ️  沒有找到需要恢復的 session');
         }
     } else {
-        console.log('ℹ️ 数据库中没有 session 记录');
+        console.log('ℹ️  數據庫中沒有有效的 session 記錄');
     }
 }
 
