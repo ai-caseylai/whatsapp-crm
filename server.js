@@ -206,6 +206,16 @@ function startHeartbeat(sessionId, sock) {
     session.heartbeatTimer.unref(); // Don't keep process alive just for heartbeat
 }
 
+// Helper to unwrap message (global scope)
+function unwrapMessage(message) {
+    if (!message) return null;
+    if (message.viewOnceMessage?.message) return unwrapMessage(message.viewOnceMessage.message);
+    if (message.viewOnceMessageV2?.message) return unwrapMessage(message.viewOnceMessageV2.message);
+    if (message.ephemeralMessage?.message) return unwrapMessage(message.ephemeralMessage.message);
+    if (message.documentWithCaptionMessage?.message) return unwrapMessage(message.documentWithCaptionMessage.message);
+    return message;
+}
+
 async function startSession(sessionId) {
     if (sessions.has(sessionId) && sessions.get(sessionId).status === 'connected') {
         return;
@@ -362,6 +372,8 @@ async function startSession(sessionId) {
             }
 
             // 2. Explicitly fetch groups to ensure they are in contacts
+            // 修复：立即获取群组信息，并设置定时重试以确保获取到所有群组
+            async function fetchAndUpdateGroups() {
             try {
                 console.log(`[${sessionId}] 正在獲取所有群組信息...`);
                 const groups = await sock.groupFetchAllParticipating();
@@ -380,12 +392,31 @@ async function startSession(sessionId) {
                 if (groupContacts.length > 0) {
                     console.log(`[${sessionId}] 找到 ${groupContacts.length} 個群組，正在更新名稱...`);
                     await supabase.from('whatsapp_contacts')
-                        .upsert(groupContacts, { onConflict: 'session_id,jid' });
+                            .upsert(groupContacts, { onConflict: 'session_id,jid', ignoreDuplicates: false });
                     console.log(`[${sessionId}] ✅ 群組名稱已更新`);
                 }
+                    return groupContacts.length;
             } catch (e) {
                 console.error(`[${sessionId}] ❌ 獲取群組信息時出錯:`, e);
+                    return 0;
+                }
             }
+            
+            // 立即获取一次
+            await fetchAndUpdateGroups();
+            
+            // 10秒后再次尝试（确保历史同步开始后获取到的群组也能更新名称）
+            setTimeout(async () => {
+                console.log(`[${sessionId}] 🔄 10秒后再次获取群组信息...`);
+                await fetchAndUpdateGroups();
+            }, 10000);
+            
+            // 30秒后第三次尝试
+            setTimeout(async () => {
+                console.log(`[${sessionId}] 🔄 30秒后第三次获取群组信息...`);
+                const count = await fetchAndUpdateGroups();
+                console.log(`[${sessionId}] 📊 最终获取到 ${count} 个群组`);
+            }, 30000);
             
             // 3. Add periodic group name refresh (every 5 minutes)
             if (session.groupRefreshTimer) {
@@ -647,6 +678,30 @@ async function startSession(sessionId) {
         console.log(`[${sessionId}] Total messages synced across all batches: ${sessions.get(sessionId).totalSyncedMessages}`);
         if (isLatest) {
             console.log(`[${sessionId}] 🎉 All history has been synced! (isLatest=true)`);
+            
+            // 修复：历史同步完成后，立即获取所有群组的完整信息
+            console.log(`[${sessionId}] 🔄 历史同步完成，正在获取所有群组信息...`);
+            setTimeout(async () => {
+                try {
+                    const groups = await sock.groupFetchAllParticipating();
+                    const groupUpdates = Object.keys(groups).map(jid => ({
+                        session_id: sessionId,
+                        jid: jid,
+                        name: groups[jid].subject || '未命名群組',
+                        notify: groups[jid].subject || '未命名群組',
+                        is_group: true,
+                        updated_at: new Date()
+                    }));
+                    
+                    if (groupUpdates.length > 0) {
+                        await supabase.from('whatsapp_contacts')
+                            .upsert(groupUpdates, { onConflict: 'session_id,jid', ignoreDuplicates: false });
+                        console.log(`[${sessionId}] ✅ 历史同步完成后，已更新 ${groupUpdates.length} 个群组名称`);
+                    }
+                } catch (e) {
+                    console.error(`[${sessionId}] ❌ 获取群组信息失败:`, e.message);
+                }
+            }, 3000); // 等待3秒，确保连接稳定
         } else {
             console.log(`[${sessionId}] ⏳ More history batches may be coming... (isLatest=false)`);
         }
@@ -680,6 +735,48 @@ async function startSession(sessionId) {
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         console.log(`[${sessionId}] Received ${messages.length} messages (type: ${type})`);
+        
+        // 修复：检查是否有群组消息，如果有则立即获取群组信息
+        const groupJids = new Set();
+        messages.forEach(msg => {
+            if (msg.key.remoteJid && msg.key.remoteJid.endsWith('@g.us')) {
+                groupJids.add(msg.key.remoteJid);
+            }
+        });
+        
+        // 如果有群组消息，立即获取群组信息（异步，不阻塞消息处理）
+        if (groupJids.size > 0) {
+            console.log(`[${sessionId}] 📋 检测到 ${groupJids.size} 个群组的消息，正在获取群组信息...`);
+            
+            // 异步获取群组信息
+            (async () => {
+                try {
+                    const groups = await sock.groupFetchAllParticipating();
+                    const groupUpdates = [];
+                    
+                    groupJids.forEach(jid => {
+                        if (groups[jid]) {
+                            groupUpdates.push({
+                                session_id: sessionId,
+                                jid: jid,
+                                name: groups[jid].subject || '未命名群組',
+                                notify: groups[jid].subject || '未命名群組',
+                                is_group: true,
+                                updated_at: new Date()
+                            });
+                        }
+                    });
+                    
+                    if (groupUpdates.length > 0) {
+                        await supabase.from('whatsapp_contacts')
+                            .upsert(groupUpdates, { onConflict: 'session_id,jid', ignoreDuplicates: false });
+                        console.log(`[${sessionId}] ✅ 已更新 ${groupUpdates.length} 个群组的信息`);
+                    }
+                } catch (error) {
+                    console.error(`[${sessionId}] ❌ 获取群组信息失败:`, error.message);
+                }
+            })();
+        }
         
         // Process in chunks of 50
         const chunkSize = 50;
@@ -736,17 +833,21 @@ async function startSession(sessionId) {
                         .upsert(updates, { onConflict: 'session_id,jid', ignoreDuplicates: false }); // We want to update timestamps
                 }
 
-                // Webhook for new messages (not history, but upsert can contain history if type is 'append')
-                // Usually type 'notify' means new message
+                // 🔧 只广播实时新消息（type='notify'），历史同步消息（type='append'）静默保存
+                // type='notify': 实时接收的新消息（用户刚发的）→ 自动打开聊天
+                // type='append': 历史同步的旧消息（从服务器拉取的）→ 静默保存到数据库
                 if (type === 'notify') {
                     validMessages.forEach(m => {
                         sendWebhook('message', { sessionId, message: m });
                         
                         // Broadcast via WebSocket for real-time updates
                         if (global.broadcastMessage) {
+                            console.log(`[${sessionId}] 📤 广播实时新消息到前端: ${m.remote_jid}`);
                             global.broadcastMessage(sessionId, m.remote_jid, m);
                         }
                     });
+                } else if (type === 'append') {
+                    console.log(`[${sessionId}] 💾 历史消息已静默保存 (${validMessages.length} 条)`);
                 }
             }
         }
@@ -763,7 +864,19 @@ async function startSession(sessionId) {
                 const isGroup = jid.endsWith('@g.us');
                 const isBroadcast = jid === 'status@broadcast';
                 
-                if (!isGroup && !isBroadcast) {
+                // 修复：处理群组消息联系人信息
+                if (isGroup) {
+                    // 确保群组联系人存在（即使没有名字）
+                    if (!senders.has(jid)) {
+                        senders.set(jid, {
+                            session_id: sessionId,
+                            jid: jid,
+                            name: null, // 群组名称会通过groups.update事件更新
+                            is_group: true,
+                            updated_at: new Date()
+                        });
+                    }
+                } else if (!isBroadcast) {
                     // Try to detect if it's me
                     // Use sock.user or fallback to state.creds.me (available during sync)
                     const currentUser = sock.user || state.creds.me;
@@ -806,19 +919,17 @@ async function startSession(sessionId) {
         
         if (senders.size > 0) {
             const { error } = await supabase.from('whatsapp_contacts')
-                .upsert(Array.from(senders.values()), { onConflict: 'session_id,jid' }); // This might overwrite existing names with pushName
+                .upsert(Array.from(senders.values()), { 
+                    onConflict: 'session_id,jid',
+                    ignoreDuplicates: false  // 允许更新已有联系人的名字
+                });
+            
+            if (!error) {
+                const withNames = Array.from(senders.values()).filter(s => s.name).length;
+                console.log(`[${sessionId}] ✅ 更新了 ${senders.size} 个联系人（其中 ${withNames} 个有名字）`);
+            }
         }
     });
-
-// Helper to unwrap message
-function unwrapMessage(message) {
-    if (!message) return null;
-    if (message.viewOnceMessage?.message) return unwrapMessage(message.viewOnceMessage.message);
-    if (message.viewOnceMessageV2?.message) return unwrapMessage(message.viewOnceMessageV2.message);
-    if (message.ephemeralMessage?.message) return unwrapMessage(message.ephemeralMessage.message);
-    if (message.documentWithCaptionMessage?.message) return unwrapMessage(message.documentWithCaptionMessage.message);
-    return message;
-}
 
 // Separate preparation logic
 async function prepareMessageForSupabase(sessionId, msg, sock) {
@@ -1162,6 +1273,398 @@ app.post('/api/session/:id/refresh-lid-contacts', async (req, res) => {
     }
 });
 
+// 🆕 刷新未知联系人的名称（从 WhatsApp 获取个人资料）
+app.post('/api/session/:id/refresh-unknown-contacts', async (req, res) => {
+    const sessionId = req.params.id;
+    const mem = sessions.get(sessionId);
+    
+    if (!mem || !mem.sock) {
+        return res.status(400).json({ error: '會話未連接' });
+    }
+    
+    try {
+        console.log(`[${sessionId}] 🔍 正在查找没有名字的联系人...`);
+        
+        // 从数据库获取所有没有名字的私人联系人
+        const { data: contacts, error } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid, name')
+            .eq('session_id', sessionId)
+            .is('is_group', false)  // 只查询私人联系人
+            .like('jid', '%@s.whatsapp.net')  // 排除 LID 格式
+            .limit(100);  // 限制一次处理 100 个
+        
+        if (error) {
+            throw error;
+        }
+        
+        // 过滤出没有名字或名字就是电话号码的联系人
+        const unknownContacts = contacts.filter(c => {
+            if (!c.name) return true;
+            const phoneNumber = c.jid.split('@')[0];
+            return c.name === phoneNumber;
+        });
+        
+        console.log(`[${sessionId}] 找到 ${unknownContacts.length} 个未知联系人，正在获取个人资料...`);
+        
+        let updated = 0;
+        let failed = 0;
+        
+        // 批量处理，避免请求过多
+        for (const contact of unknownContacts.slice(0, 20)) {  // 每次只处理前 20 个
+            try {
+                const jid = contact.jid;
+                const phoneNumber = jid.split('@')[0];
+                
+                // 方法1: 尝试获取用户状态（可能包含名字）
+                try {
+                    const status = await mem.sock.fetchStatus(jid);
+                    if (status && status.status) {
+                        // 状态中可能包含用户设置的名字
+                        console.log(`[${sessionId}] 📝 获取到 ${phoneNumber} 的状态: ${status.status.substring(0, 30)}...`);
+                    }
+                } catch (e) {
+                    // 忽略错误
+                }
+                
+                // 方法2: 尝试从 onWhatsApp 获取信息
+                try {
+                    const [result] = await mem.sock.onWhatsApp(phoneNumber);
+                    console.log(`[${sessionId}] 📞 查询 ${phoneNumber}: exists=${result?.exists}, verifiedName=${result?.verifiedName}, name=${result?.name}`);
+                    
+                    if (result && result.exists) {
+                        const verifiedName = result.verifiedName || result.name;
+                        if (verifiedName && verifiedName !== phoneNumber) {
+                            await supabase.from('whatsapp_contacts').update({
+                                name: verifiedName,
+                                notify: verifiedName,
+                                updated_at: new Date()
+                            }).eq('session_id', sessionId).eq('jid', jid);
+                            
+                            console.log(`[${sessionId}] ✅ 更新联系人 ${phoneNumber} -> ${verifiedName}`);
+                            updated++;
+                        } else {
+                            console.log(`[${sessionId}] ⏭️ 跳过 ${phoneNumber}: 没有有效名字（verifiedName=${verifiedName}）`);
+                        }
+                    } else {
+                        console.log(`[${sessionId}] ⏭️ 跳过 ${phoneNumber}: 不存在于 WhatsApp`);
+                    }
+                } catch (e) {
+                    console.error(`[${sessionId}] ❌ 获取 ${phoneNumber} 信息失败:`, e.message);
+                    failed++;
+                }
+                
+                // 添加延迟，避免请求过快
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (e) {
+                failed++;
+            }
+        }
+        
+        return res.json({
+            success: true,
+            total: unknownContacts.length,
+            processed: Math.min(20, unknownContacts.length),
+            updated: updated,
+            failed: failed,
+            message: `已处理 ${Math.min(20, unknownContacts.length)} 个联系人，成功更新 ${updated} 个`
+        });
+    } catch (error) {
+        console.error(`[${sessionId}] 刷新未知联系人失败:`, error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+// 🆕 更新联系人的自定义备注名
+app.post('/api/session/:id/update-contact-note', async (req, res) => {
+    const sessionId = req.params.id;
+    const { jid, customName } = req.body;
+    
+    if (!jid) {
+        return res.status(400).json({ error: '缺少 JID 参数' });
+    }
+    
+    try {
+        const { data, error } = await supabase
+            .from('whatsapp_contacts')
+            .update({ 
+                custom_name: customName || null,
+                updated_at: new Date()
+            })
+            .eq('session_id', sessionId)
+            .eq('jid', jid);
+        
+        if (error) throw error;
+        
+        console.log(`[${sessionId}] ✅ 更新联系人 ${jid} 的备注: ${customName}`);
+        
+        return res.json({
+            success: true,
+            message: '备注已更新'
+        });
+    } catch (error) {
+        console.error(`[${sessionId}] 更新备注失败:`, error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+// 🆕 测试：查询特定联系人的 pushName  
+app.get('/api/session/:id/test-pushname/:phone', async (req, res) => {
+    const sessionId = req.params.id;
+    const phone = req.params.phone;
+    
+    try {
+        // 查询群组消息中该电话号码的 pushName
+        const { data: groupMessages, error } = await supabase
+            .from('whatsapp_messages')
+            .select('participant, full_message_json, message_timestamp, remote_jid')
+            .eq('session_id', sessionId)
+            .like('remote_jid', '%@g.us')
+            .ilike('participant', `%${phone}%`)
+            .order('message_timestamp', { ascending: false })
+            .limit(20);
+        
+        if (error) throw error;
+        
+        const results = [];
+        groupMessages?.forEach(msg => {
+            const fullMsg = msg.full_message_json;
+            const pushName = fullMsg?.pushName;
+            
+            results.push({
+                remote_jid: msg.remote_jid,
+                participant: msg.participant,
+                pushName: pushName,
+                timestamp: msg.message_timestamp,
+                has_pushName: !!pushName,
+                message_keys: Object.keys(fullMsg || {}).slice(0, 10)
+            });
+        });
+        
+        // 也查询私人消息看看
+        const { data: privateMessages, error: privError } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, full_message_json, message_timestamp, from_me')
+            .eq('session_id', sessionId)
+            .like('remote_jid', '%@s.whatsapp.net')
+            .ilike('remote_jid', `%${phone}%`)
+            .eq('from_me', false)
+            .order('message_timestamp', { ascending: false })
+            .limit(10);
+        
+        const privateResults = [];
+        privateMessages?.forEach(msg => {
+            const fullMsg = msg.full_message_json;
+            const pushName = fullMsg?.pushName;
+            
+            privateResults.push({
+                remote_jid: msg.remote_jid,
+                pushName: pushName,
+                timestamp: msg.message_timestamp,
+                has_pushName: !!pushName,
+                from_me: msg.from_me
+            });
+        });
+        
+        return res.json({
+            phone: phone,
+            group_messages: {
+                total: results.length,
+                with_pushName: results.filter(r => r.has_pushName).length,
+                samples: results.slice(0, 5)
+            },
+            private_messages: {
+                total: privateResults.length,
+                with_pushName: privateResults.filter(r => r.has_pushName).length,
+                samples: privateResults.slice(0, 5)
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
+});
+
+// 🆕 从所有消息（群组和私人）中提取 pushName 并更新联系人名称
+app.post('/api/session/:id/extract-names-from-groups', async (req, res) => {
+    const sessionId = req.params.id;
+    
+    try {
+        console.log(`[${sessionId}] 🔍 正在从所有消息中提取联系人名称...`);
+        
+        // 方法1: 从群组消息中提取 participant 的 pushName
+        const { data: groupMessages, error: groupError } = await supabase
+            .from('whatsapp_messages')
+            .select('participant, full_message_json')
+            .eq('session_id', sessionId)
+            .like('remote_jid', '%@g.us')  // 只查询群组消息
+            .not('participant', 'is', null)  // participant 不为空
+            .order('message_timestamp', { ascending: false })
+            .limit(5000);  // 限制查询数量，避免太慢
+        
+        if (groupError) throw groupError;
+        
+        // 方法2: 从私人消息中提取 from 的 pushName
+        const { data: privateMessages, error: privateError } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, full_message_json, from_me')
+            .eq('session_id', sessionId)
+            .like('remote_jid', '%@s.whatsapp.net')  // 只查询私人消息
+            .eq('from_me', false)  // 只要对方发来的消息
+            .order('message_timestamp', { ascending: false })
+            .limit(5000);
+        
+        if (privateError) throw privateError;
+        
+        const messages = [...(groupMessages || []), ...(privateMessages || [])];
+        
+        // 提取所有 pushName
+        const pushNameMap = new Map();  // jid -> pushName
+        
+        messages.forEach(msg => {
+            const fullMsg = msg.full_message_json;
+            const pushName = fullMsg?.pushName;
+            
+            if (!pushName) return;
+            
+            // 处理群组消息：从 participant 提取
+            if (msg.participant) {
+                const participant = msg.participant;
+                if (!pushNameMap.has(participant)) {
+                    pushNameMap.set(participant, pushName);
+                }
+            }
+            
+            // 处理私人消息：从 remote_jid 提取
+            if (msg.remote_jid && !msg.from_me) {
+                const remoteJid = msg.remote_jid;
+                if (!pushNameMap.has(remoteJid)) {
+                    pushNameMap.set(remoteJid, pushName);
+                }
+            }
+        });
+        
+        console.log(`[${sessionId}] 📊 从所有消息中提取到 ${pushNameMap.size} 个联系人名称（群组 + 私人）`);
+        
+        // 更新数据库中没有名字的联系人
+        let updated = 0;
+        let skipped = 0;
+        let notFound = 0;
+        let hasCustomName = 0;
+        let alreadyHasName = 0;
+        
+        for (const [rawJid, pushName] of pushNameMap) {
+            // rawJid 格式可能是: 
+            // - 85297188675@s.whatsapp.net (私人消息)
+            // - 85297188675:69@s.whatsapp.net (群组 participant，带设备ID)
+            // - 210719786180760:69@lid (LID 格式)
+            
+            // 标准化 JID
+            let jid;
+            let phoneNumber;
+            
+            if (rawJid.includes('@lid')) {
+                // LID 格式，保持原样
+                jid = rawJid;
+                phoneNumber = rawJid.split('@')[0].split(':')[0];  // 提取电话号码用于日志
+            } else {
+                // 提取电话号码，去掉设备ID
+                phoneNumber = rawJid.split('@')[0].split(':')[0];
+                jid = phoneNumber + '@s.whatsapp.net';
+            }
+            
+            try {
+                // 查询联系人
+                const { data: existing, error: queryError } = await supabase
+                    .from('whatsapp_contacts')
+                    .select('name, custom_name')
+                    .eq('session_id', sessionId)
+                    .eq('jid', jid)
+                    .maybeSingle();  // 使用 maybeSingle 代替 single，避免找不到时报错
+                
+                if (queryError) {
+                    console.error(`[${sessionId}] ❌ 查询联系人 ${phoneNumber} 失败:`, queryError.message);
+                    skipped++;
+                    continue;
+                }
+                
+                if (!existing) {
+                    // 联系人不存在，创建新联系人
+                    console.log(`[${sessionId}] ℹ️ 联系人 ${phoneNumber} 不存在，创建新联系人: ${pushName}`);
+                    
+                    const { error: insertError } = await supabase
+                        .from('whatsapp_contacts')
+                        .insert({
+                            session_id: sessionId,
+                            jid: jid,
+                            name: pushName,
+                            notify: pushName,
+                            is_group: false,
+                            updated_at: new Date()
+                        });
+                    
+                    if (!insertError) {
+                        updated++;
+                        console.log(`[${sessionId}] ✅ 创建联系人 ${phoneNumber} -> ${pushName}`);
+                    } else {
+                        console.error(`[${sessionId}] ❌ 创建联系人失败:`, insertError.message);
+                        skipped++;
+                    }
+                    continue;
+                }
+                
+                // 如果已经有自定义名字，不覆盖
+                if (existing.custom_name) {
+                    hasCustomName++;
+                    continue;
+                }
+                
+                // 如果已经有名字且不是电话号码，不覆盖
+                if (existing.name && existing.name !== phoneNumber) {
+                    alreadyHasName++;
+                    continue;
+                }
+                
+                // 更新名字
+                const { error: updateError } = await supabase
+                    .from('whatsapp_contacts')
+                    .update({
+                        name: pushName,
+                        notify: pushName,
+                        updated_at: new Date()
+                    })
+                    .eq('session_id', sessionId)
+                    .eq('jid', jid);
+                
+                if (!updateError) {
+                    updated++;
+                    console.log(`[${sessionId}] ✅ 更新联系人 ${phoneNumber} -> ${pushName}`);
+                } else {
+                    console.error(`[${sessionId}] ❌ 更新联系人失败:`, updateError.message);
+                    skipped++;
+                }
+            } catch (e) {
+                console.error(`[${sessionId}] ❌ 处理联系人 ${phoneNumber} 时出错:`, e.message);
+                skipped++;
+            }
+        }
+        
+        console.log(`[${sessionId}] 📊 提取结果: 总共 ${pushNameMap.size} 个，更新 ${updated} 个，跳过 ${skipped} 个，有自定义名 ${hasCustomName} 个，已有名字 ${alreadyHasName} 个，未找到 ${notFound} 个`);
+        
+        return res.json({
+            success: true,
+            total: pushNameMap.size,
+            updated: updated,
+            skipped: skipped,
+            hasCustomName: hasCustomName,
+            alreadyHasName: alreadyHasName,
+            message: `从所有消息中提取到 ${pushNameMap.size} 个名称，成功更新/创建 ${updated} 个联系人\n\n已有自定义名: ${hasCustomName} 个\n已有其他名字: ${alreadyHasName} 个\n跳过/失败: ${skipped} 个`
+        });
+    } catch (error) {
+        console.error(`[${sessionId}] 提取名称失败:`, error);
+        return res.status(500).json({ error: error.message });
+    }
+});
+
 // Refresh group names
 app.post('/api/session/:id/refresh-groups', async (req, res) => {
     const sessionId = req.params.id;
@@ -1255,15 +1758,92 @@ app.post('/api/session/:id/sync-recent', async (req, res) => {
     });
 });
 
+// 🆕 手动添加联系人（用于修复缺失的联系人）
+app.post('/api/session/:id/add-contact', async (req, res) => {
+    const sessionId = req.params.id;
+    const { jid, name } = req.body;
+    
+    if (!jid) {
+        return res.status(400).json({ error: 'JID required' });
+    }
+    
+    try {
+        // 🔧 首先获取该联系人的最后消息时间
+        const { data: messages } = await supabase
+            .from('whatsapp_messages')
+            .select('message_timestamp, push_name')
+            .eq('session_id', sessionId)
+            .eq('remote_jid', jid)
+            .order('message_timestamp', { ascending: false })
+            .limit(1);
+        
+        const lastMessage = messages && messages.length > 0 ? messages[0] : null;
+        // 🔧 如果没有传入 name，从消息中获取对方的名字（排除自己发的消息）
+        const otherMessage = lastMessage && lastMessage.from_me !== true ? lastMessage : null;
+        const contactName = name || otherMessage?.push_name || lastMessage?.push_name || jid.split('@')[0];
+        
+        // 🔧 使用当前时间作为 updated_at，确保新添加的联系人排在前面
+        const updatedAt = new Date();
+        
+        const { error } = await supabase.from('whatsapp_contacts').upsert({
+            session_id: sessionId,
+            jid: jid,
+            name: contactName,
+            notify: contactName,
+            updated_at: updatedAt
+        }, { onConflict: 'session_id,jid' });
+        
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+        
+        res.json({ 
+            success: true, 
+            message: `Contact ${contactName} added`,
+            lastMessageTime: lastMessage?.message_timestamp || null
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Get Contacts (Protected by Session ID only) with last message time
 app.get('/api/session/:id/contacts', async (req, res) => {
     const sessionId = req.params.id;
     
     // Also try to fetch contacts from Supabase first
-    let { data, error } = await supabase
+    // 🔧 分页获取所有联系人（Supabase 默认限制 1000 行）
+    let data = [];
+    let currentPage = 0;
+    const pageSize = 1000;
+    let hasMore = true;
+    
+    while (hasMore) {
+        const { data: pageData, error: pageError } = await supabase
         .from('whatsapp_contacts')
         .select('*')
-        .eq('session_id', sessionId);
+            .eq('session_id', sessionId)
+            .range(currentPage * pageSize, (currentPage + 1) * pageSize - 1);
+        
+        if (pageError) {
+            console.error(`[API] ❌ Error fetching contacts page ${currentPage}:`, pageError);
+            break;
+        }
+        
+        if (pageData && pageData.length > 0) {
+            data.push(...pageData);
+            currentPage++;
+            // 如果返回的数据少于 pageSize，说明没有更多数据了
+            if (pageData.length < pageSize) {
+                hasMore = false;
+            }
+        } else {
+            hasMore = false;
+        }
+    }
+    
+    console.log(`[API] 📊 从数据库获取了 ${data.length} 个联系人（共 ${currentPage} 页）`);
+    const error = null;
         
     // If empty, use Store to populate
     if ((!data || data.length === 0)) {
@@ -1295,52 +1875,354 @@ app.get('/api/session/:id/contacts', async (req, res) => {
     
     // Enrich contacts with last message time
     try {
-        // Get last message time for each contact
-        const jids = data.map(c => c.jid);
+        console.log(`[API] 📋 获取 ${data.length} 个联系人的最后消息时间...`);
         
-        // Query for the last message from each JID
-        const { data: lastMessages } = await supabase
+        if (data.length === 0) {
+            return res.json([]);
+        }
+        
+        // 修复：使用单个聚合查询获取所有联系人的最后消息时间（高效）
+        // 尝试使用 RPC 函数（如果已创建）
+        let lastMessageMap = new Map();
+        
+        try {
+            // 尝试使用自定义函数（需要先在 Supabase 中创建）
+            const { data: lastMessages, error: rpcError } = await supabase
+                .rpc('get_last_message_times', { session_id_param: sessionId });
+            
+            if (!rpcError && lastMessages) {
+                lastMessages.forEach(({ remote_jid, last_message_timestamp }) => {
+                    lastMessageMap.set(remote_jid, last_message_timestamp);
+                });
+                console.log(`[API] ✅ 使用 RPC 函数获取到 ${lastMessageMap.size} 个联系人的最后消息时间`);
+            } else {
+                throw new Error('RPC function not available, using fallback');
+            }
+        } catch (rpcError) {
+            // 回退方案：使用原生查询
+            console.log(`[API] ⚠️ RPC 函数不可用，使用原生查询...`);
+            
+            // 直接查询所有消息，按 remote_jid 分组获取最大时间戳
+            // 注意：这个查询可能会很慢，建议创建 RPC 函数
+            const { data: messages } = await supabase
             .from('whatsapp_messages')
             .select('remote_jid, message_timestamp')
             .eq('session_id', sessionId)
-            .in('remote_jid', jids)
             .order('message_timestamp', { ascending: false });
         
-        // Create a map of JID to last message time
-        const lastMessageMap = new Map();
-        if (lastMessages) {
-            lastMessages.forEach(msg => {
+            if (messages) {
+                // 手动分组获取每个联系人的最后消息时间
+                messages.forEach(msg => {
                 if (!lastMessageMap.has(msg.remote_jid)) {
                     lastMessageMap.set(msg.remote_jid, msg.message_timestamp);
                 }
             });
+                console.log(`[API] ✅ 使用原生查询获取到 ${lastMessageMap.size} 个联系人的最后消息时间`);
+            }
         }
         
         // Add last_message_time to each contact
-        const enrichedData = data.map(contact => ({
+        // 🔧 只使用真实的消息时间，不使用 updated_at 作为 fallback
+        let enrichedData = data.map(contact => ({
             ...contact,
-            last_message_time: lastMessageMap.get(contact.jid) || contact.updated_at || null
+            last_message_time: lastMessageMap.get(contact.jid) || null
         }));
         
+        // 🔧 确保"我"（用户自己）也在联系人列表中，并有正确的 last_message_time
+        const session = sessions.get(sessionId);
+        if (session && session.userInfo) {
+            // 用户的 JID 可能有多种格式：
+            // 1. LID 格式: 210719786180760:69@lid
+            // 2. 旧格式: 85297188675:69@s.whatsapp.net
+            // 需要检查两种格式
+            const myLidJid = session.userInfo.id; // LID 格式
+            const myPhoneNumber = myLidJid.split(':')[0].split('@')[0]; // 提取电话号码
+            const myOldJid = myPhoneNumber + '@s.whatsapp.net'; // 旧格式
+            
+            // 检查哪个 JID 有消息记录
+            let myJid = null;
+            let myLastMessageTime = null;
+            
+            if (lastMessageMap.has(myLidJid)) {
+                myJid = myLidJid;
+                myLastMessageTime = lastMessageMap.get(myLidJid);
+            } else if (lastMessageMap.has(myOldJid)) {
+                myJid = myOldJid;
+                myLastMessageTime = lastMessageMap.get(myOldJid);
+            }
+            
+            if (myJid && myLastMessageTime) {
+                const hasSelf = enrichedData.some(c => c.jid === myJid || c.jid === myOldJid || c.jid === myLidJid);
+                
+                if (!hasSelf) {
+                    // 如果联系人列表中没有"我"，但有消息记录，就添加"我"
+                    enrichedData.push({
+                        session_id: sessionId,
+                        jid: myJid,
+                        name: session.userInfo.name || '我',
+                        notify: session.userInfo.name || '我',
+                        last_message_time: myLastMessageTime,
+                        updated_at: new Date().toISOString()
+                    });
+                    console.log(`[API] ℹ️ 自动添加"我"(${myJid})到联系人列表，最后消息时间: ${myLastMessageTime}`);
+                }
+            }
+        }
+        
+        // 🔧 排序逻辑：完全按最新消息时间排序（和 WhatsApp 原生顺序一致）
+        enrichedData.sort((a, b) => {
+            const timeA = a.last_message_time;
+            const timeB = b.last_message_time;
+            
+            // 1️⃣ 没有消息时间的排到最后
+            if (!timeA && !timeB) {
+                // 两个都没有消息，按名字排序
+                const nameA = a.name || a.jid || '';
+                const nameB = b.name || b.jid || '';
+                return nameA.localeCompare(nameB);
+            }
+            if (!timeA) return 1;  // A 没有消息，排到后面
+            if (!timeB) return -1; // B 没有消息，排到后面
+            
+            // 2️⃣ 按最新消息时间排序（降序：最新的在前）
+            const timeCompare = timeB.localeCompare(timeA);
+            
+            // 3️⃣ 如果时间相同，按名字排序
+            if (timeCompare === 0) {
+                const nameA = a.name || a.jid || '';
+                const nameB = b.name || b.jid || '';
+                return nameA.localeCompare(nameB);
+            }
+            
+            return timeCompare;
+        });
+        
+        // 🆕 去重：对于同名的联系人/群组，只保留最新的那一个
+        const nameMap = new Map(); // name -> contact with latest message
+        const deduplicatedData = [];
+        
+        for (const contact of enrichedData) {
+            const name = contact.name || contact.jid;
+            
+            if (!name) {
+                // 如果没有名字，直接保留
+                deduplicatedData.push(contact);
+                continue;
+            }
+            
+            const existing = nameMap.get(name);
+            
+            if (!existing) {
+                // 第一次遇到这个名字，记录下来
+                nameMap.set(name, contact);
+                deduplicatedData.push(contact);
+            } else {
+                // 已经存在同名的，比较 last_message_time
+                const existingTime = existing.last_message_time || existing.updated_at || '';
+                const currentTime = contact.last_message_time || contact.updated_at || '';
+                
+                if (currentTime > existingTime) {
+                    // 当前联系人的消息更新，替换掉旧的
+                    const index = deduplicatedData.indexOf(existing);
+                    if (index !== -1) {
+                        deduplicatedData[index] = contact;
+                        nameMap.set(name, contact);
+                    }
+                }
+                // 否则，保留原来的（更新的），丢弃当前这个旧的
+            }
+        }
+        
+        enrichedData = deduplicatedData;
+        console.log(`[API] 🔄 去重后剩余 ${enrichedData.length} 个联系人`);
+        
+        // 🆕 排序后处理：查找前 50 个可见联系人中无消息的私人联系人并替换为群组
+        const replacements = new Map(); // jid -> groupJid
+        const visibleContacts = enrichedData.slice(0, 50);
+        
+        for (const contact of visibleContacts) {
+            const isGroup = contact.is_group || contact.jid.endsWith('@g.us');
+            const hasMessages = lastMessageMap.has(contact.jid);
+            
+            if (!isGroup && !hasMessages) {
+                const phoneNumber = contact.jid.split('@')[0].split(':')[0];
+                
+                // 🔧 查询该联系人的群组消息（带时间戳，选择最近的）
+                const { data: groupMessages } = await supabase
+                    .from('whatsapp_messages')
+                    .select('remote_jid, message_timestamp')
+                    .eq('session_id', sessionId)
+                    .like('remote_jid', '%@g.us')
+                    .ilike('participant', `%${phoneNumber}%`)
+                    .order('message_timestamp', { ascending: false })
+                    .limit(50);
+                
+                if (groupMessages && groupMessages.length > 0) {
+                    // 🔧 选择最近活跃的群组（第一条消息的群组）
+                    const mostRecentGroupJid = groupMessages[0].remote_jid;
+                    replacements.set(contact.jid, mostRecentGroupJid);
+                    
+                    const groupCount = new Set(groupMessages.map(m => m.remote_jid)).size;
+                    console.log(`[API] 🔄 替换联系人: ${contact.name || contact.jid.split('@')[0]} -> 最近活跃群组 ${mostRecentGroupJid.split('@')[0]} (共 ${groupCount} 个群组)`);
+                }
+            }
+        }
+        
+        // 执行替换
+        if (replacements.size > 0) {
+            enrichedData = enrichedData.map(contact => {
+                if (replacements.has(contact.jid)) {
+                    const groupJid = replacements.get(contact.jid);
+                    const existingGroup = enrichedData.find(c => c.jid === groupJid);
+                    
+                    if (existingGroup) {
+                        return {
+                            ...existingGroup,
+                            _original_contact_name: contact.name,
+                            _is_replacement: true
+                        };
+                    }
+                }
+                return contact;
+            });
+            
+            // 去重：删除重复的独立群组
+            const replacementGroupJids = new Set(Array.from(replacements.values()));
+            enrichedData = enrichedData.filter(contact => {
+                const isGroup = contact.is_group || contact.jid.endsWith('@g.us');
+                const isReplacement = contact._is_replacement;
+                // 删除重复的独立群组（非替换的）
+                if (isGroup && replacementGroupJids.has(contact.jid) && !isReplacement) {
+                    return false;
+                }
+                return true;
+            });
+            
+            // 🆕 去重替换群组：多个联系人可能被替换为同一个群组，只保留第一个
+            const seenReplacementJids = new Set();
+            enrichedData = enrichedData.filter(contact => {
+                if (contact._is_replacement) {
+                    if (seenReplacementJids.has(contact.jid)) {
+                        // 已经有这个替换群组了，删除重复的
+                        return false;
+                    } else {
+                        seenReplacementJids.add(contact.jid);
+                        return true;
+                    }
+                }
+                return true;
+            });
+        }
+        
+        console.log(`[API] ✅ 返回 ${enrichedData.length} 个联系人（按最新消息时间排序，替换了 ${replacements.size} 个无消息联系人）`);
         res.json(enrichedData);
     } catch (enrichError) {
-        console.error('Error enriching contacts:', enrichError);
-        // If enrichment fails, return original data
-        res.json(data);
+        console.error('[API] ❌ Error enriching contacts:', enrichError);
+        // If enrichment fails, still try to sort by updated_at
+        const sortedData = data.sort((a, b) => {
+            const timeA = a.updated_at || '';
+            const timeB = b.updated_at || '';
+            return timeB.localeCompare(timeA);
+        });
+        res.json(sortedData);
+    }
+});
+
+// 🆕 查找联系人参与的群组（按最近活跃时间排序）
+app.get('/api/session/:id/contact-groups/:jid', async (req, res) => {
+    const sessionId = req.params.id;
+    const contactJid = req.params.jid;
+    
+    try {
+        // 从联系人 JID 中提取电话号码（去掉 @lid 或 @s.whatsapp.net）
+        const phoneNumber = contactJid.split('@')[0].split(':')[0];
+        
+        // 查找包含该联系人的群组消息（作为 participant）
+        const { data: groupMessages, error } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, message_timestamp')
+            .eq('session_id', sessionId)
+            .like('remote_jid', '%@g.us') // 只查群组
+            .ilike('participant', `%${phoneNumber}%`) // participant 包含电话号码
+            .order('message_timestamp', { ascending: false })
+            .limit(500);
+        
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+        
+        // 🔧 计算每个群组中该联系人的最后消息时间
+        const groupLastMessage = new Map();
+        groupMessages?.forEach(msg => {
+            if (!groupLastMessage.has(msg.remote_jid)) {
+                groupLastMessage.set(msg.remote_jid, msg.message_timestamp);
+            }
+        });
+        
+        const uniqueGroupJids = Array.from(groupLastMessage.keys());
+        
+        // 获取群组详细信息
+        if (uniqueGroupJids.length > 0) {
+            const { data: groups } = await supabase
+                .from('whatsapp_contacts')
+                .select('jid, name, is_group')
+                .eq('session_id', sessionId)
+                .in('jid', uniqueGroupJids);
+            
+            // 添加最后消息时间并排序
+            const groupsWithTime = (groups || []).map(g => ({
+                ...g,
+                last_activity: groupLastMessage.get(g.jid)
+            })).sort((a, b) => {
+                // 按最近活跃时间排序
+                return (b.last_activity || '').localeCompare(a.last_activity || '');
+            });
+            
+            res.json({
+                contactJid,
+                groups: groupsWithTime,
+                totalGroups: uniqueGroupJids.length,
+                mostRecentGroup: groupsWithTime[0] || null // 最近活跃的群组
+            });
+        } else {
+            res.json({
+                contactJid,
+                groups: [],
+                totalGroups: 0,
+                mostRecentGroup: null
+            });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
 // Get Messages
 app.get('/api/session/:id/messages/:jid', async (req, res) => {
+    const sessionId = req.params.id;
+    const jid = req.params.jid;
+    
+    console.log(`[API] 📨 获取消息: 会话=${sessionId}, 聊天=${jid}`);
+    
+    try {
     const { data, error } = await supabase
         .from('whatsapp_messages')
         .select('*')
-        .eq('session_id', req.params.id)
-        .eq('remote_jid', req.params.jid)
+            .eq('session_id', sessionId)
+            .eq('remote_jid', jid)
         .order('message_timestamp', { ascending: true });
         
-    if (error) return res.status(500).json({ error: error.message });
+        if (error) {
+            console.error(`[API] ❌ 获取消息失败:`, error);
+            return res.status(500).json({ error: error.message });
+        }
+        
+        console.log(`[API] ✅ 返回 ${data.length} 条消息`);
     res.json(data);
+    } catch (error) {
+        console.error(`[API] ❌ 获取消息异常:`, error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // Debug: DB Check
@@ -1469,6 +2351,309 @@ app.post('/api/session/:id/broadcast', upload.single('attachment'), async (req, 
 
     } catch (e) {
         console.error('Broadcast error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Download Media for a Specific Message
+app.post('/api/session/:id/download-media/:messageId', async (req, res) => {
+    const { id: sessionId, messageId } = req.params;
+    const session = sessions.get(sessionId);
+    
+    if (!session || !session.sock) {
+        return res.status(400).json({ error: 'Session not active' });
+    }
+    
+    try {
+        // Get message from database
+        const { data: msg, error } = await supabase
+            .from('whatsapp_messages')
+            .select('*')
+            .eq('session_id', sessionId)
+            .eq('message_id', messageId)
+            .single();
+            
+        if (error || !msg) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+        
+        // Check if media already exists
+        if (msg.attachment_path) {
+            return res.json({ 
+                success: true, 
+                media_path: `/media/${msg.attachment_path}`,
+                message: 'Media already downloaded'
+            });
+        }
+        
+        const realMessage = unwrapMessage(msg.full_message_json.message);
+        if (!realMessage) {
+            return res.status(400).json({ error: 'Invalid message format' });
+        }
+        
+        const messageType = getContentType(realMessage);
+        const mediaTypes = ['imageMessage', 'videoMessage', 'documentMessage', 'audioMessage', 'stickerMessage', 'pttMessage'];
+        
+        if (!mediaTypes.includes(messageType)) {
+            return res.status(400).json({ error: 'Message does not contain media' });
+        }
+        
+        console.log(`[${sessionId}] 📥 Downloading ${messageType} for message ${messageId}`);
+        
+        // Download media
+        const buffer = await downloadMediaMessage(
+            { key: msg.full_message_json.key, message: realMessage },
+            'buffer',
+            {},
+            { 
+                logger: console,
+                reuploadRequest: session.sock.updateMediaMessage
+            }
+        ).catch((e) => {
+            console.error(`[${sessionId}] Media download failed:`, e.message);
+            return null;
+        });
+        
+        if (buffer) {
+            let ext = mime.extension(realMessage[messageType]?.mimetype || 'application/octet-stream');
+            
+            // Better extension handling
+            if (messageType === 'documentMessage') {
+                const fileName = realMessage.documentMessage?.fileName;
+                if (fileName && fileName.includes('.')) {
+                    ext = fileName.split('.').pop();
+                }
+            } else if (messageType === 'audioMessage' || messageType === 'pttMessage') {
+                ext = 'ogg';
+            } else if (messageType === 'stickerMessage') {
+                ext = 'webp';
+            } else if (messageType === 'imageMessage' && !ext) {
+                ext = 'jpg';
+            } else if (messageType === 'videoMessage' && !ext) {
+                ext = 'mp4';
+            }
+            
+            if (!ext) ext = 'bin';
+            
+            const attachmentFilename = `${messageId}.${ext}`;
+            const filePath = path.join(SHARED_MEDIA_DIR, attachmentFilename);
+            fs.writeFileSync(filePath, buffer);
+            console.log(`[${sessionId}] ✅ Saved media to ${attachmentFilename}`);
+            
+            // Update database
+            await supabase
+                .from('whatsapp_messages')
+                .update({ attachment_path: attachmentFilename })
+                .eq('session_id', sessionId)
+                .eq('message_id', messageId);
+            
+            res.json({ 
+                success: true, 
+                media_path: `/media/${attachmentFilename}`,
+                size: buffer.length
+            });
+        } else {
+            res.status(500).json({ error: 'Failed to download media' });
+        }
+    } catch (e) {
+        console.error('Download media error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 🆕 全局下载所有缺失的媒体文件（图片和视频）
+app.post('/api/session/:id/download-all-media', async (req, res) => {
+    const sessionId = req.params.id;
+    const session = sessions.get(sessionId);
+    
+    if (!session || !session.sock) {
+        return res.status(400).json({ error: 'Session not active' });
+    }
+    
+    try {
+        // 🔧 只下载图片和视频（跳过音频、贴图和文档）
+        const { data: messages, error } = await supabase
+            .from('whatsapp_messages')
+            .select('*')
+            .eq('session_id', sessionId)
+            .is('attachment_path', null)
+            .in('message_type', ['imageMessage', 'videoMessage'])
+            .order('message_timestamp', { ascending: false })
+            .limit(500); // 限制 500 个，避免一次性下载太多
+        
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+        
+        console.log(`[${sessionId}] 📥 开始全局下载 ${messages.length} 个缺失的图片和视频...`);
+        
+        let downloaded = 0;
+        let failed = 0;
+        
+        // 异步处理，不阻塞响应
+        (async () => {
+            for (const msg of messages) {
+                try {
+                    const realMessage = unwrapMessage(msg.full_message_json.message);
+                    if (!realMessage) continue;
+                    
+                    const messageType = getContentType(realMessage);
+                    
+                    const buffer = await downloadMediaMessage(
+                        { key: msg.full_message_json.key, message: realMessage },
+                        'buffer',
+                        {},
+                        { 
+                            logger: console,
+                            reuploadRequest: session.sock.updateMediaMessage
+                        }
+                    ).catch(() => null);
+                    
+                    if (buffer) {
+                        let ext = mime.extension(realMessage[messageType]?.mimetype || 'application/octet-stream');
+                        
+                        if (messageType === 'imageMessage' && !ext) {
+                            ext = 'jpg';
+                        } else if (messageType === 'videoMessage' && !ext) {
+                            ext = 'mp4';
+                        }
+                        
+                        if (!ext) ext = 'bin';
+                        
+                        const attachmentFilename = `${msg.message_id}.${ext}`;
+                        const filePath = path.join(SHARED_MEDIA_DIR, attachmentFilename);
+                        fs.writeFileSync(filePath, buffer);
+                        
+                        await supabase
+                            .from('whatsapp_messages')
+                            .update({ attachment_path: attachmentFilename })
+                            .eq('session_id', sessionId)
+                            .eq('message_id', msg.message_id);
+                        
+                        downloaded++;
+                        
+                        if (downloaded % 10 === 0) {
+                            console.log(`[${sessionId}] 📥 进度: ${downloaded}/${messages.length}`);
+                        }
+                    } else {
+                        failed++;
+                    }
+                } catch (e) {
+                    failed++;
+                    console.error(`[${sessionId}] ❌ Failed to download media:`, e.message);
+                }
+            }
+            
+            console.log(`[${sessionId}] ✅ 全局下载完成: 成功 ${downloaded}, 失败 ${failed}`);
+        })();
+        
+        // 立即返回响应
+        res.json({ 
+            success: true, 
+            message: `开始下载 ${messages.length} 个媒体文件（图片和视频）`,
+            total: messages.length,
+            note: '下载正在后台进行，请稍候...'
+        });
+    } catch (e) {
+        console.error(`[${sessionId}] ❌ Error starting global media download:`, e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Download All Missing Media for a Chat
+app.post('/api/session/:id/download-chat-media/:jid', async (req, res) => {
+    const { id: sessionId, jid } = req.params;
+    const session = sessions.get(sessionId);
+    
+    if (!session || !session.sock) {
+        return res.status(400).json({ error: 'Session not active' });
+    }
+    
+    try {
+        // Get all messages without media for this chat
+        const { data: messages, error } = await supabase
+            .from('whatsapp_messages')
+            .select('*')
+            .eq('session_id', sessionId)
+            .eq('remote_jid', jid)
+            .is('attachment_path', null)
+            .in('message_type', ['imageMessage', 'videoMessage', 'documentMessage', 'audioMessage', 'stickerMessage']);
+            
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+        
+        console.log(`[${sessionId}] 📥 Downloading ${messages.length} missing media files for ${jid}`);
+        
+        let downloaded = 0;
+        let failed = 0;
+        
+        for (const msg of messages) {
+            try {
+                const realMessage = unwrapMessage(msg.full_message_json.message);
+                if (!realMessage) continue;
+                
+                const messageType = getContentType(realMessage);
+                
+                const buffer = await downloadMediaMessage(
+                    { key: msg.full_message_json.key, message: realMessage },
+                    'buffer',
+                    {},
+                    { 
+                        logger: console,
+                        reuploadRequest: session.sock.updateMediaMessage
+                    }
+                ).catch(() => null);
+                
+                if (buffer) {
+                    let ext = mime.extension(realMessage[messageType]?.mimetype || 'application/octet-stream');
+                    
+                    if (messageType === 'documentMessage') {
+                        const fileName = realMessage.documentMessage?.fileName;
+                        if (fileName && fileName.includes('.')) {
+                            ext = fileName.split('.').pop();
+                        }
+                    } else if (messageType === 'audioMessage' || messageType === 'pttMessage') {
+                        ext = 'ogg';
+                    } else if (messageType === 'stickerMessage') {
+                        ext = 'webp';
+                    } else if (messageType === 'imageMessage' && !ext) {
+                        ext = 'jpg';
+                    } else if (messageType === 'videoMessage' && !ext) {
+                        ext = 'mp4';
+                    }
+                    
+                    if (!ext) ext = 'bin';
+                    
+                    const attachmentFilename = `${msg.message_id}.${ext}`;
+                    const filePath = path.join(SHARED_MEDIA_DIR, attachmentFilename);
+                    fs.writeFileSync(filePath, buffer);
+                    
+                    await supabase
+                        .from('whatsapp_messages')
+                        .update({ attachment_path: attachmentFilename })
+                        .eq('session_id', sessionId)
+                        .eq('message_id', msg.message_id);
+                    
+                    downloaded++;
+                    console.log(`[${sessionId}] ✅ Downloaded ${attachmentFilename}`);
+                } else {
+                    failed++;
+                }
+            } catch (e) {
+                console.error(`[${sessionId}] ❌ Failed to download media for ${msg.message_id}:`, e.message);
+                failed++;
+            }
+        }
+        
+        res.json({ 
+            success: true, 
+            total: messages.length,
+            downloaded,
+            failed
+        });
+    } catch (e) {
+        console.error('Download chat media error:', e);
         res.status(500).json({ error: e.message });
     }
 });
@@ -1695,19 +2880,46 @@ app.post('/api/v1/webhook', async (req, res) => {
 
 // Init: Restore sessions from DB
 async function init() {
-    const { data: sessionsData } = await supabase.from('whatsapp_sessions').select('*');
-    if (sessionsData) {
-        for (const s of sessionsData) {
-            // Restore all sessions that were active
-            if (s.status === 'connected' || s.status === 'initializing') {
-                try {
-                    console.log(`Restoring session ${s.session_id}`);
-                    await startSession(s.session_id);
-                } catch (e) {
-                    console.error(`Failed to restore session ${s.session_id}:`, e);
+    const { data: sessionsData } = await supabase
+        .from('whatsapp_sessions')
+        .select('*')
+        .order('updated_at', { ascending: false }); // 按最新更新时间排序
+    
+    if (sessionsData && sessionsData.length > 0) {
+        // 🔧 只恢复最新的一个 session，避免多个连接冲突
+        const latestSession = sessionsData.find(s => 
+            s.status === 'connected' || s.status === 'initializing'
+        );
+        
+        if (latestSession) {
+            try {
+                console.log(`✅ 恢复最新的 session: ${latestSession.session_id}`);
+                await startSession(latestSession.session_id);
+                
+                // 清理其他旧的 session 状态（但不删除记录）
+                const otherSessions = sessionsData.filter(s => 
+                    s.session_id !== latestSession.session_id && 
+                    (s.status === 'connected' || s.status === 'initializing')
+                );
+                
+                if (otherSessions.length > 0) {
+                    console.log(`🧹 清理 ${otherSessions.length} 个旧 session 的状态...`);
+                    for (const oldSession of otherSessions) {
+                        await supabase
+                            .from('whatsapp_sessions')
+                            .update({ status: 'stopped', qr_code: null })
+                            .eq('session_id', oldSession.session_id);
+                        console.log(`   - 已停止: ${oldSession.session_id}`);
+                    }
                 }
+            } catch (e) {
+                console.error(`❌ 恢复 session ${latestSession.session_id} 失败:`, e);
             }
+        } else {
+            console.log('ℹ️ 没有找到需要恢复的 session');
         }
+    } else {
+        console.log('ℹ️ 数据库中没有 session 记录');
     }
 }
 
@@ -1800,18 +3012,32 @@ wss.on('connection', (ws, req) => {
 
 // Broadcast function to send messages to all connected clients
 function broadcastMessage(sessionId, chatId, message) {
+    const isGroup = chatId && chatId.endsWith('@g.us');
+    const messagePreview = message.content ? message.content.substring(0, 50) : '[媒体消息]';
+    
+    console.log(`[WebSocket] 📤 广播消息 - 会话: ${sessionId}, 聊天: ${chatId}, 类型: ${isGroup ? '群组' : '私聊'}, 内容预览: ${messagePreview}`);
+    
     const data = JSON.stringify({
         type: 'new_message',
         sessionId,
         chatId,
-        message
+        message,
+        isGroup
     });
     
+    let sentCount = 0;
     wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
+            try {
             client.send(data);
+                sentCount++;
+            } catch (error) {
+                console.error('[WebSocket] ❌ 发送失败:', error.message);
+            }
         }
     });
+    
+    console.log(`[WebSocket] ✅ 消息已发送到 ${sentCount} 个客户端`);
 }
 
 // Make broadcastMessage available globally

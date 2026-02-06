@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.12</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.39</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -41,6 +41,24 @@
                 <span id="user-name" class="font-bold bg-[#008f6f] px-3 py-1 rounded-full text-sm shadow-sm"></span>
             </div>
             <span id="status-badge" class="px-2 py-1 rounded bg-gray-500 text-sm">檢查中...</span>
+            <button onclick="downloadAllMedia()" class="bg-blue-500 hover:bg-blue-600 px-3 py-1 rounded text-sm transition shadow-sm text-white flex items-center gap-1" title="下載所有缺失的圖片和影片">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                </svg>
+                下載媒體
+            </button>
+            <button onclick="refreshUnknownContacts()" class="bg-purple-500 hover:bg-purple-600 px-3 py-1 rounded text-sm transition shadow-sm text-white flex items-center gap-1" title="從 WhatsApp 獲取未知聯絡人的名稱">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                </svg>
+                從 WA 獲取
+            </button>
+            <button onclick="extractNamesFromGroups()" class="bg-green-500 hover:bg-green-600 px-3 py-1 rounded text-sm transition shadow-sm text-white flex items-center gap-1" title="從所有消息中提取聯絡人名稱（群組 + 私人）">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                </svg>
+                提取名稱
+            </button>
             <button onclick="resync()" class="bg-yellow-500 hover:bg-yellow-600 px-3 py-1 rounded text-sm transition shadow-sm text-white" title="清除資料並重新掃描以同步完整歷史">強制同步</button>
             <button onclick="openMarketing()" class="bg-[#008f6f] hover:bg-[#007f5f] px-3 py-1 rounded text-sm transition shadow-sm font-bold flex items-center gap-1">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"></path></svg>
@@ -348,6 +366,9 @@
         let currentChatId = null;
         let allContacts = [];
         let statusPollInterval = null;
+        let currentUserName = null; // 存储用户自己的名字
+        let isLoadingChat = false; // 防止重复加载聊天
+        let isLoadingContacts = false; // 防止重复加载联系人
 
         console.log('Using Session ID:', currentSessionId);
 
@@ -374,6 +395,7 @@
                     // Prefer pushName (user set name), fallback to name, then notify, then ID
                     const name = data.user.pushName || data.user.name || data.user.notify || data.user.id.split(':')[0];
                     userName.textContent = name;
+                    currentUserName = name; // 保存用户名字到全局变量
                     userIdentity.classList.remove('hidden');
                 } else {
                     userIdentity.classList.add('hidden');
@@ -445,6 +467,162 @@
             }
         }
 
+        async function downloadAllMedia() {
+            if (!currentSessionId) {
+                alert('請先登入');
+                return;
+            }
+            
+            if (confirm('即將開始下載所有缺失的圖片和影片（最多 500 個）。\n\n這可能需要幾分鐘時間，下載完成後請刷新頁面。\n\n確定要開始嗎？')) {
+                try {
+                    const statusBadge = document.getElementById('status-badge');
+                    const originalText = statusBadge.textContent;
+                    statusBadge.textContent = '下載中...';
+                    statusBadge.className = 'px-2 py-1 rounded bg-blue-500 text-sm animate-pulse';
+                    
+                    const res = await fetch(`/api/session/${currentSessionId}/download-all-media`, {
+                        method: 'POST'
+                    });
+                    
+                    const result = await res.json();
+                    
+                    if (result.success) {
+                        alert(`✅ ${result.message}\n\n下載正在後台進行，請等待 1-3 分鐘後刷新頁面查看。`);
+                        statusBadge.textContent = '下載進行中...';
+                    } else {
+                        alert('❌ 下載失敗: ' + (result.error || '未知錯誤'));
+                        statusBadge.textContent = originalText;
+                        statusBadge.className = 'px-2 py-1 rounded bg-gray-500 text-sm';
+                    }
+                } catch (e) {
+                    console.error('Download all media error:', e);
+                    alert('❌ 下載失敗: ' + e.message);
+                }
+            }
+        }
+        
+        async function refreshUnknownContacts() {
+            if (!currentSessionId) {
+                alert('請先登入');
+                return;
+            }
+            
+            if (confirm('即將從 WhatsApp 獲取未知聯絡人的名稱（最多 20 個）。\n\n這可能需要 10-20 秒。\n\n確定要開始嗎？')) {
+                try {
+                    const statusBadge = document.getElementById('status-badge');
+                    const originalText = statusBadge.textContent;
+                    statusBadge.textContent = '刷新中...';
+                    statusBadge.className = 'px-2 py-1 rounded bg-purple-500 text-sm animate-pulse';
+                    
+                    const res = await fetch(`/api/session/${currentSessionId}/refresh-unknown-contacts`, {
+                        method: 'POST'
+                    });
+                    
+                    const result = await res.json();
+                    
+                    if (result.success) {
+                        alert(`✅ ${result.message}\n\n找到 ${result.total} 個未知聯絡人，處理了 ${result.processed} 個，成功更新 ${result.updated} 個。\n\n請刷新頁面查看更新。`);
+                        statusBadge.textContent = originalText;
+                        statusBadge.className = 'px-2 py-1 rounded bg-gray-500 text-sm';
+                        
+                        // 自動刷新聯絡人列表
+                        if (result.updated > 0) {
+                            setTimeout(() => {
+                                location.reload();
+                            }, 1000);
+                        }
+                    } else {
+                        alert('❌ 刷新失敗: ' + (result.error || '未知錯誤'));
+                        statusBadge.textContent = originalText;
+                        statusBadge.className = 'px-2 py-1 rounded bg-gray-500 text-sm';
+                    }
+                } catch (e) {
+                    console.error('Refresh unknown contacts error:', e);
+                    alert('❌ 刷新失敗: ' + e.message);
+                }
+            }
+        }
+        
+        // 🆕 从所有消息提取名称
+        async function extractNamesFromGroups() {
+            if (!currentSessionId) {
+                alert('請先登入');
+                return;
+            }
+            
+            if (confirm('即將從所有消息（群組 + 私人）中提取聯絡人名稱（最多 10000 條消息）。\n\n這可能需要 10-30 秒。\n\n確定要開始嗎？')) {
+                try {
+                    const statusBadge = document.getElementById('status-badge');
+                    const originalText = statusBadge.textContent;
+                    statusBadge.textContent = '提取中...';
+                    statusBadge.className = 'px-2 py-1 rounded bg-green-500 text-sm animate-pulse';
+                    
+                    const res = await fetch(`/api/session/${currentSessionId}/extract-names-from-groups`, {
+                        method: 'POST'
+                    });
+                    
+                    const result = await res.json();
+                    
+                    if (result.success) {
+                        alert(`✅ ${result.message}\n\n請刷新頁面查看更新。`);
+                        statusBadge.textContent = originalText;
+                        statusBadge.className = 'px-2 py-1 rounded bg-gray-500 text-sm';
+                        
+                        // 自動刷新聯絡人列表
+                        if (result.updated > 0) {
+                            setTimeout(() => {
+                                location.reload();
+                            }, 1000);
+                        }
+                    } else {
+                        alert('❌ 提取失敗: ' + (result.error || '未知錯誤'));
+                        statusBadge.textContent = originalText;
+                        statusBadge.className = 'px-2 py-1 rounded bg-gray-500 text-sm';
+                    }
+                } catch (e) {
+                    console.error('Extract names error:', e);
+                    alert('❌ 提取失敗: ' + e.message);
+                }
+            }
+        }
+        
+        // 🆕 编辑联系人备注
+        function editContactNote(jid, currentDisplayName, currentCustomName) {
+            const newName = prompt(`請輸入聯絡人備注名稱:\n\n當前顯示: ${currentDisplayName}\n當前備注: ${currentCustomName || '（無）'}`, currentCustomName || '');
+            
+            if (newName === null) return; // 用户取消
+            
+            // 保存备注
+            updateContactNote(jid, newName);
+        }
+        
+        async function updateContactNote(jid, customName) {
+            if (!currentSessionId) {
+                alert('請先登入');
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/session/${currentSessionId}/update-contact-note`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jid, customName })
+                });
+                
+                const result = await res.json();
+                
+                if (result.success) {
+                    // 刷新联系人列表
+                    await refreshContacts();
+                } else {
+                    alert('❌ 更新備注失敗: ' + (result.error || '未知錯誤'));
+                }
+            } catch (e) {
+                console.error('Update contact note error:', e);
+                alert('❌ 更新備注失敗: ' + e.message);
+            }
+        }
+        
         async function resync() {
             if(confirm('強制同步將會登出並需要您重新掃描 QR Code。\n\n這通常能解決「缺訊息」或「缺群組」的問題。\n\n確定要繼續嗎？')) {
                 // Same as logout but with different intent message
@@ -531,7 +709,14 @@
         }
 
         async function loadContacts() {
+            // 防止重複加載
+            if (isLoadingContacts) {
+                console.log('⏳ 正在加載聯絡人中，跳過重複請求');
+                return;
+            }
+            
             try {
+                isLoadingContacts = true;
                 const res = await fetch(`/api/session/${currentSessionId}/contacts`);
                 const data = await res.json();
                 
@@ -546,6 +731,8 @@
             } catch (e) {
                 console.error('Failed to load contacts:', e);
                 document.getElementById('contacts-list').innerHTML = '<div class="p-4 text-center text-red-500 text-sm">載入失敗</div>';
+            } finally {
+                isLoadingContacts = false;
             }
         }
 
@@ -556,26 +743,11 @@
                 return id && !id.includes('status@broadcast');
             });
 
-            // 2. Inject Self
-            if (window.currentUserJid) {
-                const hasSelf = valid.some(c => c.jid === window.currentUserJid || c.id === window.currentUserJid);
-                if (!hasSelf) {
-                    valid.unshift({
-                        jid: window.currentUserJid,
-                        name: 'Note to Self (自己)',
-                        notify: 'You',
-                        updated_at: new Date().toISOString()
-                    });
-                }
-            }
-
-            // 3. Sort (Latest message time first)
-            valid.sort((a, b) => {
-                // Use last_message_time if available, otherwise fall back to updated_at
-                const timeA = a.last_message_time || a.updated_at || '';
-                const timeB = b.last_message_time || b.updated_at || '';
-                return timeB.localeCompare(timeA);
-            });
+            // 2. 后端已经包含"我"并排序好了，前端不需要再添加或排序
+            // 如果后端没有返回"我"，也不手动添加（让后端处理）
+            
+            // 3. 🔧 移除前端排序 - 后端已经排序好了，前端不应该再次排序
+            // valid.sort(...) - 已移除，使用后端的排序结果
 
             // 4. Save to global
             allContacts = valid;
@@ -633,9 +805,15 @@
                     displayId = id.split('@')[0];
                 }
                 
-                // Better name handling
+                // 🆕 优先显示自定义备注名
                 let name;
-                if (c.name && c.name.trim()) {
+                let hasCustomName = false;
+                
+                if (c.custom_name && c.custom_name.trim()) {
+                    // 优先使用自定义备注
+                    name = c.custom_name;
+                    hasCustomName = true;
+                } else if (c.name && c.name.trim()) {
                     name = c.name;
                 } else if (c.notify && c.notify.trim()) {
                     name = c.notify;
@@ -649,50 +827,211 @@
                     name = displayId;
                 } 
                 
+                // 显示原始名字（如果有自定义备注的话）
+                const originalName = hasCustomName ? (c.name || displayId) : '';
+                
                 return `
-                <div onclick="loadChat('${id}', '${name.replace(/'/g, "\\'")}')" 
-                     class="p-3 border-b border-gray-100 hover:bg-gray-100 cursor-pointer transition flex items-center group">
-                    <div class="w-12 h-12 rounded-full ${isGroup ? 'bg-indigo-400' : 'bg-gray-300'} flex items-center justify-center mr-3 text-white font-bold shrink-0">
-                        ${name[0].toUpperCase()}
+                <div class="p-3 border-b border-gray-100 hover:bg-gray-100 cursor-pointer transition flex items-center group relative">
+                    <div onclick="loadChat('${id}', '${name.replace(/'/g, "\\'")}')" class="flex items-center flex-1 overflow-hidden min-w-0">
+                        <div class="w-12 h-12 rounded-full ${isGroup ? 'bg-indigo-400' : 'bg-gray-300'} flex items-center justify-center mr-3 text-white font-bold shrink-0">
+                            ${name[0].toUpperCase()}
+                        </div>
+                        <div class="overflow-hidden min-w-0">
+                            <div class="font-semibold text-gray-800 truncate">
+                                ${name}
+                                ${hasCustomName ? '<span class="text-xs text-blue-600 ml-1">📝</span>' : ''}
+                            </div>
+                            ${originalName ? `<div class="text-xs text-gray-400 truncate">${originalName}</div>` : ''}
+                            <div class="text-xs text-gray-500 truncate font-mono">${displayId}</div>
+                        </div>
                     </div>
-                    <div class="overflow-hidden min-w-0">
-                        <div class="font-semibold text-gray-800 truncate">${name}</div>
-                        <div class="text-xs text-gray-500 truncate font-mono">${displayId}</div>
-                    </div>
+                    ${!isGroup ? `
+                    <button onclick="event.stopPropagation(); editContactNote('${id}', '${name.replace(/'/g, "\\'")}', '${(c.custom_name || '').replace(/'/g, "\\'")}')" 
+                            class="opacity-0 group-hover:opacity-100 transition p-2 hover:bg-gray-200 rounded-full text-gray-600" 
+                            title="編輯備注">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                        </svg>
+                    </button>
+                    ` : ''}
                 </div>
             `;
             }).join('');
         }
 
         async function loadChat(jid, name) {
-            currentChatId = jid;
-            document.getElementById('welcome-screen').classList.add('hidden');
-            document.getElementById('qr-container').classList.add('hidden');
-            document.getElementById('chat-header').classList.remove('hidden');
-            const messagesContainer = document.getElementById('messages-container');
-            messagesContainer.classList.remove('hidden');
+            // 防止重複加載相同聊天
+            if (isLoadingChat && currentChatId === jid) {
+                console.log(`⏳ 正在加載聊天 ${jid}，跳過重複請求`);
+                return;
+            }
             
-            document.getElementById('current-contact-name').textContent = name;
-            document.getElementById('current-contact-id').textContent = jid.endsWith('@g.us') ? '群組 Group' : jid.replace('@s.whatsapp.net', '');
-            document.getElementById('header-avatar').textContent = name[0].toUpperCase();
-            document.getElementById('header-avatar').className = `w-10 h-10 rounded-full flex items-center justify-center text-white font-bold mr-3 ${jid.endsWith('@g.us') ? 'bg-indigo-400' : 'bg-gray-400'}`;
+            try {
+                isLoadingChat = true;
+                currentChatId = jid;
+                
+                document.getElementById('welcome-screen').classList.add('hidden');
+                document.getElementById('qr-container').classList.add('hidden');
+                document.getElementById('chat-header').classList.remove('hidden');
+                const messagesContainer = document.getElementById('messages-container');
+                messagesContainer.classList.remove('hidden');
+                
+                // 🔧 先使用传入的名字，稍后从消息中更新
+                let displayName = name;
+                document.getElementById('current-contact-name').textContent = displayName;
+                document.getElementById('current-contact-id').textContent = jid.endsWith('@g.us') ? '群組 Group' : jid.replace('@s.whatsapp.net', '').replace('@lid', '');
+                document.getElementById('header-avatar').textContent = displayName[0].toUpperCase();
+                document.getElementById('header-avatar').className = `w-10 h-10 rounded-full flex items-center justify-center text-white font-bold mr-3 ${jid.endsWith('@g.us') ? 'bg-indigo-400' : 'bg-gray-400'}`;
 
-            messagesContainer.innerHTML = '<div class="text-center text-gray-500 mt-4">載入訊息中...</div>';
+                messagesContainer.innerHTML = '<div class="text-center text-gray-500 mt-4">載入訊息中...</div>';
 
-            await refreshMessages(jid);
+                // 🔧 加载消息并从中提取真实的联系人名字
+                const messages = await refreshMessages(jid);
+                
+                // 🔧 从消息中获取对方的真实名字（对于私聊）
+                if (!jid.endsWith('@g.us') && messages && messages.length > 0) {
+                    // 找到第一条不是自己发的消息，获取对方的名字
+                    const otherMessage = messages.find(m => !m.from_me);
+                    if (otherMessage && otherMessage.push_name) {
+                        displayName = otherMessage.push_name;
+                        document.getElementById('current-contact-name').textContent = displayName;
+                        document.getElementById('header-avatar').textContent = displayName[0].toUpperCase();
+                        console.log(`✅ 从消息中更新联系人名字: ${displayName}`);
+                    }
+                }
+                
+                // 🆕 自動下載此聊天的所有缺失媒體（異步，不阻塞UI）
+                downloadChatMedia(jid);
+            } finally {
+                isLoadingChat = false;
+            }
+        }
+        
+        // 下載聊天的所有缺失媒體
+        let isDownloadingMedia = false; // 防止重複下載
+        
+        async function downloadChatMedia(jid) {
+            // 防止重複下載
+            if (isDownloadingMedia) {
+                console.log(`⏳ 正在下載媒體中，跳過重複請求`);
+                return;
+            }
+            
+            try {
+                isDownloadingMedia = true;
+                console.log(`📥 開始下載 ${jid} 的媒體文件...`);
+                
+                const res = await fetch(`/api/session/${currentSessionId}/download-chat-media/${encodeURIComponent(jid)}`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    if (data.downloaded > 0) {
+                        console.log(`✅ 成功下載 ${data.downloaded} 個媒體文件，正在刷新...`);
+                        // 重新加載消息以顯示新下載的媒體
+                        if (currentChatId === jid) {
+                            await refreshMessages(jid);
+                        }
+                    } else if (data.total > 0) {
+                        console.log(`⚠️ ${data.total} 個媒體文件下載失敗（可能是歷史消息鏈接已過期）`);
+                    } else {
+                        console.log(`ℹ️ 此聊天沒有缺失的媒體文件`);
+                    }
+                }
+            } catch (e) {
+                console.error('❌ 下載媒體失敗:', e);
+            } finally {
+                isDownloadingMedia = false;
+            }
+        }
+        
+        // 🆕 显示"无消息"提示，并自动跳转到最近活跃的群组
+        async function showNoMessagesWithGroups(jid) {
+            const messagesContainer = document.getElementById('messages-container');
+            
+            try {
+                // 调用 API 查找该联系人参与的群组
+                const res = await fetch(`/api/session/${currentSessionId}/contact-groups/${jid}`);
+                const data = await res.json();
+                
+                if (data.mostRecentGroup) {
+                    // 🔧 有群组：自动跳转到最近活跃的群组
+                    const group = data.mostRecentGroup;
+                    console.log(`🔄 联系人无私聊记录，自动跳转到最近活跃的群组: ${group.name}`);
+                    
+                    // 显示跳转提示（短暂）
+                    messagesContainer.innerHTML = `
+                        <div class="text-center text-gray-600 mt-8 px-4">
+                            <div class="text-6xl mb-4">💬</div>
+                            <div class="text-lg font-semibold mb-2">此聯絡人沒有私聊記錄</div>
+                            <div class="text-sm text-gray-500 mb-4">正在跳轉到最近活躍的群組...</div>
+                            <div class="max-w-md mx-auto">
+                                <div class="bg-indigo-50 p-3 rounded-lg border border-indigo-200">
+                                    <div class="flex items-center justify-center">
+                                        <div class="w-10 h-10 rounded-full bg-indigo-400 flex items-center justify-center text-white font-bold mr-3">
+                                            ${(group.name || 'G')[0].toUpperCase()}
+                                        </div>
+                                        <div class="font-semibold text-gray-800">${group.name || group.jid}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    // 1 秒后自动跳转
+                    setTimeout(() => {
+                        loadChat(group.jid, group.name || group.jid);
+                    }, 1000);
+                } else {
+                    // 没有群组：显示默认提示
+                    messagesContainer.innerHTML = `
+                        <div class="text-center text-gray-400 mt-8">
+                            <div class="text-6xl mb-4">📭</div>
+                            <div class="text-lg">暫無訊息</div>
+                            <div class="text-sm mt-2">與此聯絡人開始對話吧！</div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('Error loading contact groups:', e);
+                messagesContainer.innerHTML = `
+                    <div class="text-center text-gray-400 mt-8">
+                        <div class="text-6xl mb-4">📭</div>
+                        <div class="text-lg">暫無訊息</div>
+                        <div class="text-sm mt-2">與此聯絡人開始對話吧！</div>
+                    </div>
+                `;
+            }
         }
         
         async function refreshMessages(jid) {
-            if (currentChatId !== jid) return;
+            if (currentChatId !== jid) return null;
             const messagesContainer = document.getElementById('messages-container');
             
             try {
                 const res = await fetch(`/api/session/${currentSessionId}/messages/${jid}`);
+                
+                // 🔧 检查响应状态
+                if (!res.ok) {
+                    console.error(`❌ API 返回错误: ${res.status}`);
+                    messagesContainer.innerHTML = `<div class="text-center text-red-500 mt-4">載入失敗 (${res.status})</div>`;
+                    return null;
+                }
+                
                 const messages = await res.json();
                 
+                // 🔧 验证返回的是数组
+                if (!Array.isArray(messages)) {
+                    console.error('❌ API 返回格式错误，不是数组:', messages);
+                    messagesContainer.innerHTML = '<div class="text-center text-red-500 mt-4">數據格式錯誤</div>';
+                    return null;
+                }
+                
                 if (messages.length === 0) {
-                    messagesContainer.innerHTML = '<div class="text-center text-gray-400 mt-4">暫無訊息</div>';
-                    return;
+                    // 🔧 检查该联系人是否在群组中活跃
+                    await showNoMessagesWithGroups(jid);
+                    return messages; // 返回空数组
                 }
 
                 const html = messages
@@ -715,15 +1054,18 @@
                 
                 // 如果沒有消息，顯示提示
                 if (!html || html.trim() === '') {
-                    messagesContainer.innerHTML = '<div class="text-center text-gray-400 mt-4">暫無訊息</div>';
-                    return;
+                    await showNoMessagesWithGroups(jid);
+                    return messages; // 返回原始消息数组
                 }
                 
                 messagesContainer.innerHTML = html;
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                
+                return messages; // 🔧 返回消息数组供 loadChat 使用
 
             } catch (e) {
                 console.error('Error loading messages:', e);
+                return null;
             }
         }
         
@@ -737,8 +1079,11 @@
             let attachmentPath = msg.attachment_path;
             let mediaPath = msg.media_path; // 直接使用 media_path
 
-            // 嘗試從 full_message_json 提取真實內容（如果 content 是空的或者是消息類型）
-            if (!content || ['conversation', 'extendedTextMessage', 'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage'].includes(content)) {
+            // 🔧 改进：优先使用 msg.content，只有当它是空或是类型名称时才从 full_message_json 提取
+            const isContentEmpty = !content || content.trim() === '';
+            const isContentTypeName = ['conversation', 'extendedTextMessage', 'imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage', 'pttMessage'].includes(content);
+            
+            if (isContentEmpty || isContentTypeName) {
                 const realMsg = msg.full_message_json?.message;
                 if (realMsg) {
                     // Unwrap message layers
@@ -762,6 +1107,17 @@
                     }
                 }
             }
+            
+            // 🆕 调试日志
+            if (!content || content.trim() === '') {
+                console.log('⚠️ 消息内容为空:', {
+                    message_id: msg.message_id,
+                    original_content: msg.content,
+                    type: type,
+                    has_attachment: !!attachmentPath,
+                    has_media: !!mediaPath
+                });
+            }
 
             // 檢測 Emoji 和 Reaction 消息
             const isEmojiOnly = content && /^[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F1E0}-\u{1F1FF}]+$/u.test(content.trim());
@@ -770,29 +1126,48 @@
             // Display Logic
             let displayContent = content;
             
-            // 只有在 content 仍然是消息類型名稱時才替換為標籤
-            if (!displayContent || displayContent === 'conversation' || displayContent === 'extendedTextMessage') {
+            // 🔧 改进：只有当 content 是类型名称或空时才进行特殊处理
+            const mediaTypeNames = ['conversation', 'extendedTextMessage', 'stickerMessage', 'audioMessage', 'pttMessage', 'imageMessage', 'videoMessage', 'documentMessage', 'pollCreationMessageV3'];
+            
+            if (!displayContent || mediaTypeNames.includes(displayContent) || displayContent.trim() === '') {
                 const m = msg.full_message_json?.message || {};
-                if (m.contactMessage) displayContent = '[聯絡人卡片]';
-                else if (m.locationMessage) displayContent = '[位置資訊]';
-                else if (m.pollCreationMessageV3) displayContent = '[投票]'; 
-                else if (!displayContent) displayContent = '';  // 保持空白，稍後處理
-            } else if (displayContent === 'stickerMessage' || displayContent === '[貼圖]') {
-                displayContent = '';  // 貼圖不需要文字
-            } else if (displayContent === 'audioMessage' || displayContent === 'pttMessage' || displayContent === '[語音訊息]' || displayContent === '[語音]') {
-                displayContent = '';  // 語音不需要文字（有播放器）
-            } else if (displayContent === 'imageMessage' || displayContent === '[圖片]') {
-                displayContent = '';  // 圖片不需要文字（會顯示圖片）
-            } else if (displayContent === 'videoMessage' || displayContent === '[影片]') {
-                displayContent = '';  // 視頻不需要文字（會顯示視頻）
-            } else if (displayContent === 'pollCreationMessageV3') {
-                displayContent = '[投票]';
+                
+                // 检查特殊消息类型
+                if (m.contactMessage) {
+                    displayContent = '[聯絡人卡片]';
+                } else if (m.locationMessage) {
+                    displayContent = '[位置資訊]';
+                } else if (m.pollCreationMessageV3 || displayContent === 'pollCreationMessageV3') {
+                    displayContent = '[投票]';
+                } else if (displayContent === 'stickerMessage' || displayContent === '[貼圖]') {
+                    displayContent = '';  // 貼圖不需要文字
+                } else if (['audioMessage', 'pttMessage', '[語音訊息]', '[語音]'].includes(displayContent)) {
+                    displayContent = '';  // 語音不需要文字（有播放器）
+                } else if (displayContent === 'imageMessage' || displayContent === '[圖片]') {
+                    displayContent = '';  // 圖片不需要文字（會顯示圖片）
+                } else if (displayContent === 'videoMessage' || displayContent === '[影片]') {
+                    displayContent = '';  // 視頻不需要文字（會顯示視頻）
+                } else if (displayContent === 'conversation' || displayContent === 'extendedTextMessage') {
+                    // 这些类型应该已经有内容了，如果还是空的就保持空
+                    displayContent = '';
+                }
             }
 
             let attachmentHtml = '';
             
             // 優先使用 media_path，其次使用 attachment_path
             const finalMediaPath = mediaPath || (attachmentPath ? `/media/${attachmentPath}` : null);
+            
+            // 🔧 调试：贴图消息
+            if (type && (type.includes('sticker') || type === 'stickerMessage')) {
+                console.log('🎨 貼圖消息:', {
+                    message_id: msg.message_id,
+                    type: type,
+                    finalMediaPath: finalMediaPath,
+                    attachmentPath: attachmentPath,
+                    mediaPath: mediaPath
+                });
+            }
             
             if (finalMediaPath) {
                  if (['imageMessage', 'image'].includes(type)) {
@@ -822,14 +1197,26 @@
                              <audio controls src="${finalMediaPath}" class="flex-1 h-8"></audio>
                          </div>`;
                      if (!content || content === 'audioMessage' || content === 'pttMessage') displayContent = '';
-                 } else if (['stickerMessage', 'sticker'].includes(type)) {
-                     attachmentHtml = `
-                         <div class="mt-2">
-                             <img src="${finalMediaPath}" class="w-36 h-36 object-contain" 
-                                  onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22><text x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22 font-size=%2240%22>😊</text></svg>'" />
-                         </div>`;
-                     displayContent = '';
-                 } else {
+                } else if (['stickerMessage', 'sticker'].includes(type)) {
+                    attachmentHtml = `
+                        <div class="mt-2 relative group">
+                            <img src="${finalMediaPath}" class="w-36 h-36 object-contain rounded-lg" 
+                                 onerror="this.parentElement.innerHTML='<div class=\\'w-36 h-36 flex items-center justify-center bg-gray-100 rounded-lg text-4xl\\'>😊</div>'" />
+                        </div>`;
+                    displayContent = '';
+                } else if (type === 'stickerMessage' || content === '[貼圖]') {
+                    // 🔧 處理沒有 finalMediaPath 的貼圖
+                    attachmentHtml = `
+                        <div class="mt-2 relative group">
+                            <div class="w-36 h-36 flex items-center justify-center bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg">
+                                <div class="text-center">
+                                    <div class="text-4xl mb-2">🎨</div>
+                                    <div class="text-xs text-gray-500">[貼圖]</div>
+                                </div>
+                            </div>
+                        </div>`;
+                    displayContent = '';
+                } else {
                      const fileName = content || '附件';
                      attachmentHtml = `
                         <a href="${finalMediaPath}" target="_blank" class="block mt-2 bg-white/50 p-2 rounded border border-gray-200 hover:bg-white transition flex items-center gap-2 max-w-xs">
@@ -845,6 +1232,20 @@
                  }
             }
 
+            // 🔧 处理没有 finalMediaPath 的贴图
+            if (!attachmentHtml && (type === 'stickerMessage' || displayContent === '[貼圖]' || content === '[貼圖]')) {
+                attachmentHtml = `
+                    <div class="mt-2 relative group">
+                        <div class="w-36 h-36 flex items-center justify-center bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg">
+                            <div class="text-center">
+                                <div class="text-4xl mb-2">🎨</div>
+                                <div class="text-xs text-gray-500">貼圖</div>
+                            </div>
+                        </div>
+                    </div>`;
+                displayContent = '';
+            }
+            
             if (!displayContent && !attachmentHtml) {
                 displayContent = '<span class="italic text-gray-400">無法顯示此訊息格式</span>';
             }
@@ -923,20 +1324,37 @@
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('📨 收到 WebSocket 消息:', data);
+                    
+                    if (data.type === 'connected') {
+                        console.log('✅ WebSocket:', data.message);
+                        return;
+                    }
                     
                     if (data.type === 'new_message') {
-                        // If the message is for the currently open chat, refresh it
+                        const isGroup = data.isGroup || (data.chatId && data.chatId.endsWith('@g.us'));
+                        const messageType = isGroup ? '群组消息' : '私聊消息';
+                        const sender = data.message?.push_name || '未知';
+                        
+                        console.log(`📨 收到${messageType}: 会话=${data.sessionId}, 聊天=${data.chatId}, 发送者=${sender}`);
+                        
+                        // If the message is for the currently open chat, refresh it immediately
                         if (currentChatId === data.chatId && currentSessionId === data.sessionId) {
-                            console.log('🔄 刷新當前聊天:', data.chatId);
+                            console.log(`🔄 立即刷新当前聊天: ${data.chatId}`);
                             refreshMessages(data.chatId);
+                        } else {
+                            // 自动打开收到新消息的聊天（所有消息处理方式相同）
+                            console.log(`🔔 自动打开新消息聊天: ${data.chatId}`);
+                            // 获取联系人名称
+                            const contactName = sender || data.chatId.split('@')[0];
+                            loadChat(data.chatId, contactName);
                         }
                         
-                        // Always refresh contacts list to update last message time
+                        // Always refresh contacts list to update last message time and bring chat to top
+                        console.log('🔄 刷新联系人列表...');
                         loadContacts();
                     }
                 } catch (e) {
-                    console.error('解析 WebSocket 消息失敗:', e);
+                    console.error('❌ 解析 WebSocket 消息失敗:', e, '原始数据:', event.data);
                 }
             };
             
