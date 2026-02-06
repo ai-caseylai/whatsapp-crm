@@ -866,9 +866,37 @@
             const bubbleClass = isSticker ? 'bg-transparent shadow-none p-0' : (isFromMe ? 'message-out' : 'message-in');
             const timeClass = isSticker ? 'text-gray-500 bg-white/50 px-1 rounded' : 'text-gray-400';
 
+            // Extract sender info (for group messages)
+            let senderInfo = '';
+            if (!isFromMe && !isSticker) {
+                const senderName = msg.push_name || null;
+                const senderPhone = msg.participant_phone || (msg.participant ? msg.participant.split('@')[0] : null);
+                
+                if (senderName || senderPhone) {
+                    const displayName = senderName || senderPhone || '未知發送者';
+                    const displayPhone = senderPhone || '';
+                    
+                    // Check if current chat is a group
+                    const isGroupChat = currentChatId && currentChatId.endsWith('@g.us');
+                    
+                    if (isGroupChat) {
+                        // In group chats, always show sender info
+                        senderInfo = `
+                            <div class="text-xs mb-1 flex items-center gap-2">
+                                <span class="font-bold text-orange-600">${displayName}</span>
+                                ${displayPhone ? `<span class="text-gray-500 font-mono text-[10px]">${displayPhone}</span>` : ''}
+                            </div>
+                        `;
+                    } else if (senderName) {
+                        // In 1-on-1 chats, only show name if available
+                        senderInfo = `<div class="text-xs text-orange-600 font-bold mb-1">${senderName}</div>`;
+                    }
+                }
+            }
+
             return `
                 <div class="chat-message rounded-lg mb-2 ${bubbleClass} ${!isSticker ? 'p-3 shadow-sm' : ''}">
-                    ${msg.push_name && !isFromMe && !isSticker ? `<div class="text-xs text-orange-600 font-bold mb-1">${msg.push_name}</div>` : ''}
+                    ${senderInfo}
                     ${displayContent ? `<div class="text-sm text-gray-800 break-words whitespace-pre-wrap">${displayContent}</div>` : ''}
                     ${attachmentHtml}
                     <div class="text-[10px] mt-1 text-right ${timeClass}">${date}</div>
@@ -885,6 +913,13 @@
             if (!document.getElementById('qr-container').classList.contains('hidden')) return;
             loadContacts();
         }, 10000); // Refresh contacts every 10 seconds
+        
+        // Auto-refresh messages for the currently open chat
+        setInterval(() => {
+            if (currentChatId && !document.getElementById('qr-container').classList.contains('hidden')) {
+                refreshMessages(currentChatId);
+            }
+        }, 5000); // Refresh messages every 5 seconds
 
         // --- Marketing Logic ---
         let selectedContacts = new Set();
