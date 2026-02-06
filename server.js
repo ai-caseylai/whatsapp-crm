@@ -2236,6 +2236,39 @@ app.get('/api/session/:id/contact-groups/:jid', async (req, res) => {
     }
 });
 
+// Get Profile Picture (Avatar)
+app.get('/api/session/:id/avatar/:jid', async (req, res) => {
+    const sessionId = req.params.id;
+    const jid = req.params.jid;
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(404).json({ error: 'Session not found or not connected' });
+        }
+        
+        try {
+            // Get profile picture URL from WhatsApp
+            const ppUrl = await session.sock.profilePictureUrl(jid, 'image');
+            
+            if (ppUrl) {
+                // Return the URL directly
+                res.json({ success: true, url: ppUrl });
+            } else {
+                // No profile picture available
+                res.json({ success: false, url: null });
+            }
+        } catch (ppError) {
+            // Profile picture not available (privacy settings or doesn't exist)
+            console.log(`[API] ℹ️ 联系人 ${jid} 没有头像或隐私设置不可见`);
+            res.json({ success: false, url: null });
+        }
+    } catch (e) {
+        console.error(`[API] ❌ 获取头像失败:`, e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Get Messages
 app.get('/api/session/:id/messages/:jid', async (req, res) => {
     const sessionId = req.params.id;
