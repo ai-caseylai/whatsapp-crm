@@ -50,6 +50,8 @@ python3 test_api.py
 | 获取消息 | GET | `/api/crm/messages` |
 | 发送消息 | POST | `/api/crm/messages/send` |
 | 群发消息 | POST | `/api/crm/messages/broadcast` |
+| 删除消息 | POST | `/api/crm/messages/:messageId/delete` |
+| 撤回消息 | POST | `/api/crm/messages/:messageId/revoke` |
 | 获取对话列表 | GET | `/api/crm/chats` |
 | 今日统计 | GET | `/api/crm/stats/daily` |
 | 下载媒体 | POST | `/api/crm/media/download-all` |
