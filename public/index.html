@@ -1453,10 +1453,13 @@
             }
 
             // Add action buttons for message operations
+            // For messages from me (right side), button goes on the left
+            // For messages from others (left side), button goes on the right
+            const buttonPosition = isFromMe ? 'left-1' : 'right-1';
             const messageActions = `
-                <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div class="absolute top-1 ${buttonPosition} opacity-0 group-hover:opacity-100 transition-opacity z-10">
                     <button onclick="showMessageActions(event, '${msg.message_id}', ${isFromMe})" 
-                            class="text-gray-500 hover:text-gray-700 bg-white rounded-full p-1 shadow-md">
+                            class="text-gray-500 hover:text-gray-700 bg-white rounded-full p-1 shadow-md hover:shadow-lg">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path>
                         </svg>
