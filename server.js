@@ -3535,6 +3535,83 @@ app.get('/api/session/:id/lid-mappings', async (req, res) => {
     }
 });
 
+// Clean up empty contacts (no messages, no name)
+app.post('/api/session/:id/cleanup-empty-contacts', async (req, res) => {
+    const sessionId = req.params.id;
+    
+    try {
+        // Step 1: Count empty contacts
+        const { count: beforeCount, error: countError } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid', { count: 'exact', head: true })
+            .eq('session_id', sessionId)
+            .like('jid', '%@lid')
+            .is('name', null)
+            .eq('is_group', false);
+        
+        if (countError) throw countError;
+        
+        // Step 2: Find contacts with no messages
+        const { data: allEmptyContacts, error: fetchError } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid')
+            .eq('session_id', sessionId)
+            .like('jid', '%@lid')
+            .is('name', null)
+            .eq('is_group', false);
+        
+        if (fetchError) throw fetchError;
+        
+        // Step 3: Check which ones have messages
+        const emptyJids = (allEmptyContacts || []).map(c => c.jid);
+        const contactsToDelete = [];
+        
+        for (const jid of emptyJids) {
+            const { count, error } = await supabase
+                .from('whatsapp_messages')
+                .select('message_id', { count: 'exact', head: true })
+                .eq('session_id', sessionId)
+                .eq('remote_jid', jid);
+            
+            if (!error && count === 0) {
+                contactsToDelete.push(jid);
+            }
+        }
+        
+        // Step 4: Delete empty contacts
+        if (contactsToDelete.length > 0) {
+            const { error: deleteError } = await supabase
+                .from('whatsapp_contacts')
+                .delete()
+                .eq('session_id', sessionId)
+                .in('jid', contactsToDelete);
+            
+            if (deleteError) throw deleteError;
+        }
+        
+        // Step 5: Count after cleanup
+        const { count: afterCount, error: afterCountError } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid', { count: 'exact', head: true })
+            .eq('session_id', sessionId)
+            .is('name', null)
+            .eq('is_group', false);
+        
+        if (afterCountError) throw afterCountError;
+        
+        res.json({ 
+            success: true, 
+            before: beforeCount || 0,
+            deleted: contactsToDelete.length,
+            after: afterCount || 0,
+            message: `已刪除 ${contactsToDelete.length} 個空聯絡人`
+        });
+    } catch (err) {
+        console.error('Error cleaning up empty contacts:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Auto-map LIDs by matching pushName in group messages
 app.post('/api/session/:id/auto-map-lids', async (req, res) => {
     const sessionId = req.params.id;

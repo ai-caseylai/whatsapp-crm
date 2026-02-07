@@ -16,15 +16,18 @@
                 <p class="text-sm text-gray-600">Session ID: <span id="sessionId" class="font-mono font-bold"></span></p>
             </div>
             
-            <!-- Auto Map Button -->
-            <div class="mb-6">
+            <!-- Action Buttons -->
+            <div class="mb-6 flex flex-wrap gap-2">
                 <button onclick="autoMapLids()" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg transition">
                     🤖 自動映射 LID
                 </button>
-                <button onclick="loadCandidates()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg ml-2 transition">
+                <button onclick="cleanupEmptyContacts()" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition">
+                    🗑️ 清理空聯絡人
+                </button>
+                <button onclick="loadCandidates()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition">
                     🔄 刷新列表
                 </button>
-                <a href="/" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg ml-2 inline-block transition">
+                <a href="/" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg inline-block transition">
                     ← 返回主頁
                 </a>
             </div>
@@ -258,6 +261,32 @@
             } catch (err) {
                 console.error('Error auto-mapping:', err);
                 showStatus('自動映射失敗: ' + err.message, 'error');
+            }
+        }
+        
+        async function cleanupEmptyContacts() {
+            if (!confirm('確定要清理所有空的數字聯絡人嗎？\n\n這將刪除所有沒有消息記錄的 LID 聯絡人。')) {
+                return;
+            }
+            
+            try {
+                showStatus('正在清理空聯絡人...', 'info');
+                
+                const response = await fetch(`/api/session/${SESSION_ID}/cleanup-empty-contacts`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showStatus(`清理完成！刪除了 ${result.deleted} 個空聯絡人`, 'success');
+                    await loadCandidates();
+                } else {
+                    throw new Error(result.error || '未知錯誤');
+                }
+            } catch (err) {
+                console.error('Error cleaning up:', err);
+                showStatus('清理失敗: ' + err.message, 'error');
             }
         }
         
