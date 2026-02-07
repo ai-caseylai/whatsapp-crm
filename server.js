@@ -4792,9 +4792,9 @@ app.post('/api/crm/messages/:messageId/revoke', checkCaseyCRMToken, async (req, 
     }
 });
 
-// ====== LLM Assistant API (Gemini 3) ======
+// ====== LLM Assistant API (Gemini 3 via Open Router) ======
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'your-gemini-api-key-here';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 app.post('/api/llm/chat', async (req, res) => {
     try {
@@ -4804,44 +4804,47 @@ app.post('/api/llm/chat', async (req, res) => {
             return res.status(400).json({ success: false, error: '訊息不能為空' });
         }
 
-        // Prepare conversation history for Gemini
-        const contents = [
-            ...history,
-            { role: 'user', parts: [{ text: message }] }
+        // Convert history to OpenAI format
+        const messages = [
+            ...history.map(h => ({
+                role: h.role === 'model' ? 'assistant' : h.role,
+                content: h.parts[0].text
+            })),
+            { role: 'user', content: message }
         ];
 
-        // Call Gemini API
-        const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+        // Call Open Router API
+        const response = await fetch(OPENROUTER_API_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'WhatsApp CRM'
             },
             body: JSON.stringify({
-                contents,
-                generationConfig: {
-                    temperature: 0.9,
-                    topK: 40,
-                    topP: 0.95,
-                    maxOutputTokens: 2048,
-                }
+                model: 'google/gemini-2.0-flash-exp:free',
+                messages: messages,
+                temperature: 0.9,
+                max_tokens: 2048
             })
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error('Gemini API Error:', errorText);
-            throw new Error(`Gemini API 返回錯誤: ${response.status}`);
+            console.error('Open Router API Error:', errorText);
+            throw new Error(`Open Router API 返回錯誤: ${response.status}`);
         }
 
         const data = await response.json();
         
-        // Extract reply from Gemini response
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '抱歉，我無法生成回應。';
+        // Extract reply from Open Router response
+        const reply = data.choices?.[0]?.message?.content || '抱歉，我無法生成回應。';
         
         res.json({
             success: true,
             reply,
-            model: 'gemini-2.0-flash-exp'
+            model: 'gemini-2.0-flash-exp (via OpenRouter)'
         });
 
     } catch (error) {
