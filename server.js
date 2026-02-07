@@ -3878,19 +3878,52 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
         
         if (mappingError) throw mappingError;
         
-        // 4. Create mapping lookup
+        // 4. Create mapping lookup (both directions)
         const lidToTraditional = new Map();
+        const traditionalToLid = new Map();
         if (mappings) {
             for (const m of mappings) {
                 lidToTraditional.set(m.lid_jid, m.traditional_jid);
+                traditionalToLid.set(m.traditional_jid, m.lid_jid);
             }
         }
         
-        // 5. Enrich contacts with actual last message time and sort
-        const enrichedContacts = contacts.map(contact => ({
-            ...contact,
-            actual_last_message_time: lastMessageMap.get(contact.jid) || contact.last_message_time
-        }));
+        // 5. Enrich contacts with actual last message time (considering LID mappings)
+        const enrichedContacts = contacts.map(contact => {
+            let actualTime = lastMessageMap.get(contact.jid) || contact.last_message_time;
+            
+            // 🔧 Check for LID mapping and merge message times
+            if (contact.jid.includes('@s.whatsapp.net')) {
+                // This is a traditional JID, check if it has a mapped LID
+                const mappedLid = traditionalToLid.get(contact.jid);
+                if (mappedLid) {
+                    const lidTime = lastMessageMap.get(mappedLid);
+                    // Take the latest time between traditional JID and LID
+                    if (lidTime) {
+                        if (!actualTime || new Date(lidTime) > new Date(actualTime)) {
+                            actualTime = lidTime;
+                        }
+                    }
+                }
+            } else if (contact.jid.includes('@lid')) {
+                // This is a LID, check if it has a mapped traditional JID
+                const mappedTraditional = lidToTraditional.get(contact.jid);
+                if (mappedTraditional) {
+                    const traditionalTime = lastMessageMap.get(mappedTraditional);
+                    // Take the latest time
+                    if (traditionalTime) {
+                        if (!actualTime || new Date(traditionalTime) > new Date(actualTime)) {
+                            actualTime = traditionalTime;
+                        }
+                    }
+                }
+            }
+            
+            return {
+                ...contact,
+                actual_last_message_time: actualTime
+            };
+        });
         
         // Sort by last message time (most recent first)
         enrichedContacts.sort((a, b) => {
@@ -3902,11 +3935,30 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
             return new Date(timeB) - new Date(timeA);
         });
         
+        // 🔧 Deduplicate: Hide LID contacts if they have a mapped traditional JID contact
+        const seenTraditionalJids = new Set();
+        const deduplicatedContacts = [];
+        
+        for (const contact of enrichedContacts) {
+            if (contact.jid.includes('@lid')) {
+                // This is a LID contact
+                const mappedTraditional = lidToTraditional.get(contact.jid);
+                if (mappedTraditional && seenTraditionalJids.has(mappedTraditional)) {
+                    // Skip this LID - its traditional JID is already in the list
+                    continue;
+                }
+            } else if (contact.jid.includes('@s.whatsapp.net')) {
+                // Mark this traditional JID as seen
+                seenTraditionalJids.add(contact.jid);
+            }
+            deduplicatedContacts.push(contact);
+        }
+        
         // 6. Process contacts and extract phone numbers
         const csvRows = [];
         csvRows.push('名稱,電話號碼,最後訊息時間'); // CSV Header
         
-        for (const contact of enrichedContacts) {
+        for (const contact of deduplicatedContacts) {
             const displayName = contact.custom_name || contact.name || '';
             let phoneNumber = '';
             
