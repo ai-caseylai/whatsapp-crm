@@ -4792,6 +4792,67 @@ app.post('/api/crm/messages/:messageId/revoke', checkCaseyCRMToken, async (req, 
     }
 });
 
+// ====== LLM Assistant API (Gemini 3) ======
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'your-gemini-api-key-here';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent';
+
+app.post('/api/llm/chat', async (req, res) => {
+    try {
+        const { message, history = [] } = req.body;
+        
+        if (!message) {
+            return res.status(400).json({ success: false, error: '訊息不能為空' });
+        }
+
+        // Prepare conversation history for Gemini
+        const contents = [
+            ...history,
+            { role: 'user', parts: [{ text: message }] }
+        ];
+
+        // Call Gemini API
+        const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                contents,
+                generationConfig: {
+                    temperature: 0.9,
+                    topK: 40,
+                    topP: 0.95,
+                    maxOutputTokens: 2048,
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Gemini API Error:', errorText);
+            throw new Error(`Gemini API 返回錯誤: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // Extract reply from Gemini response
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '抱歉，我無法生成回應。';
+        
+        res.json({
+            success: true,
+            reply,
+            model: 'gemini-2.0-flash-exp'
+        });
+
+    } catch (error) {
+        console.error('LLM Chat Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || '服務器錯誤'
+        });
+    }
+});
+
 server.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
@@ -4799,4 +4860,5 @@ server.listen(port, () => {
     console.log(`🔍 自動檢查: 每 5 分鐘檢查斷開的會話`);
     console.log(`🔌 WebSocket 服務器已啟動`);
     console.log(`🔑 Casey CRM API: Bearer token 'casey-crm' enabled`);
+    console.log(`🤖 Gemini 3 AI Assistant: Enabled`);
 });
