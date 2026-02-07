@@ -194,6 +194,74 @@ Content-Type: application/json
 }
 ```
 
+#### 2.4 删除消息（僅自己）
+```http
+POST /api/crm/messages/delete
+Authorization: Bearer casey-crm
+Content-Type: application/json
+
+{
+  "sessionId": "sess_9ai6rbwfe_1770361159106",
+  "messageId": "3EB0XXXXXXXXXXXXXXXX"
+}
+```
+
+**说明：**
+- 从数据库中删除消息记录
+- 只影响自己的聊天记录
+- 对方仍可看到该消息
+
+**响应示例：**
+```json
+{
+  "success": true,
+  "message": "消息已删除"
+}
+```
+
+#### 2.5 撤回消息（對所有人）
+```http
+POST /api/crm/messages/revoke
+Authorization: Bearer casey-crm
+Content-Type: application/json
+
+{
+  "sessionId": "sess_9ai6rbwfe_1770361159106",
+  "messageId": "3EB0XXXXXXXXXXXXXXXX"
+}
+```
+
+**说明：**
+- 使用 WhatsApp 官方撤回协议
+- 对方也无法看到该消息
+- **限制条件：**
+  - 只能撤回自己发送的消息
+  - 消息发送时间必须在 48 小时内
+  - 需要 Session 处于活跃状态
+
+**响应示例（成功）：**
+```json
+{
+  "success": true,
+  "message": "消息已撤回"
+}
+```
+
+**响应示例（失败 - 超时）：**
+```json
+{
+  "error": "消息发送时间超过48小时，无法撤回",
+  "hoursSinceMessage": 72
+}
+```
+
+**响应示例（失败 - 权限）：**
+```json
+{
+  "error": "Can only revoke messages sent by you"
+}
+```
+
 ---
 
 ### 3. 媒体管理
