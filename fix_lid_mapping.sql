@@ -28,6 +28,13 @@ CREATE TRIGGER update_whatsapp_jid_mapping_updated_at
     FOR EACH ROW 
     EXECUTE FUNCTION update_updated_at_column();
 
+-- 3.5. 确保 whatsapp_contacts 表有 last_message_time 列
+ALTER TABLE whatsapp_contacts 
+ADD COLUMN IF NOT EXISTS last_message_time TIMESTAMP WITH TIME ZONE;
+
+-- 创建索引以提高查询性能
+CREATE INDEX IF NOT EXISTS idx_contacts_last_message_time ON whatsapp_contacts(last_message_time DESC);
+
 -- 4. 手动添加已知的映射关系（Casey 和 黃sir沈香林）
 INSERT INTO whatsapp_jid_mapping (session_id, lid_jid, traditional_jid)
 VALUES ('sess_9ai6rbwfe_1770361159106', '69827679002840@lid', '85291969997@s.whatsapp.net')
@@ -137,19 +144,23 @@ SELECT DISTINCT ON (
                   LIMIT 1), c.updated_at)
     ) as updated_at,
     c.custom_name,
-    -- 合并两个 JID 的最后消息时间
-    GREATEST(
-        c.last_message_time,
-        COALESCE((SELECT c2.last_message_time 
-                  FROM whatsapp_contacts c2
-                  JOIN whatsapp_jid_mapping mapping ON c2.jid = mapping.traditional_jid
-                  WHERE mapping.session_id = c.session_id 
-                  AND mapping.lid_jid = c.jid
-                  LIMIT 1), c.last_message_time),
-        COALESCE((SELECT MAX(m.message_timestamp)
-                  FROM whatsapp_messages m
-                  WHERE m.session_id = c.session_id
-                  AND m.remote_jid = c.jid), c.last_message_time)
+    -- 合并两个 JID 的最后消息时间（从消息表中直接计算，支持 LID 和传统 JID）
+    (SELECT MAX(m.message_timestamp)
+     FROM whatsapp_messages m
+     WHERE m.session_id = c.session_id
+     AND (
+         m.remote_jid = c.jid
+         OR m.remote_jid IN (
+             SELECT mapping.lid_jid FROM whatsapp_jid_mapping mapping
+             WHERE mapping.session_id = c.session_id
+             AND mapping.traditional_jid = c.jid
+         )
+         OR m.remote_jid IN (
+             SELECT mapping.traditional_jid FROM whatsapp_jid_mapping mapping
+             WHERE mapping.session_id = c.session_id
+             AND mapping.lid_jid = c.jid
+         )
+     )
     ) as last_message_time,
     c.phone
 FROM whatsapp_contacts c
