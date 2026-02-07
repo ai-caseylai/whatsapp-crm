@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.72</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.73</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -153,17 +153,17 @@
 
         <!-- Main: Chat -->
         <div id="chat-area" class="flex-1 flex flex-col bg-[#e5ddd5] relative">
-            <!-- Toggle Sidebar Button (Fixed) -->
-            <button onclick="toggleSidebarWidth()" id="toggle-sidebar-fixed-btn" class="absolute top-4 left-4 z-20 p-2 bg-white hover:bg-gray-100 rounded-lg shadow-lg transition border border-gray-300" title="顯示/隱藏聯絡人欄">
+            <!-- Toggle Sidebar Button (Fixed) - 移到右上角 -->
+            <button onclick="toggleSidebarWidth()" id="toggle-sidebar-fixed-btn" class="absolute top-4 right-4 z-20 p-2 bg-white hover:bg-gray-100 rounded-lg shadow-lg transition border border-gray-300" title="顯示/隱藏聯絡人欄">
                 <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
                 </svg>
             </button>
             
             <!-- Chat Header -->
-            <div id="chat-header" class="p-3 bg-gray-200 border-b border-gray-300 hidden flex items-center shadow-sm">
+            <div id="chat-header" class="p-3 pr-16 bg-gray-200 border-b border-gray-300 hidden flex items-center shadow-sm relative">
                 <div class="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center text-white font-bold mr-3" id="header-avatar">?</div>
-                <div>
+                <div class="flex-1">
                     <h2 id="current-contact-name" class="font-bold text-gray-800"></h2>
                     <p id="current-contact-id" class="text-xs text-gray-600 font-mono"></p>
                 </div>
