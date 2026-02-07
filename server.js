@@ -216,6 +216,116 @@ function unwrapMessage(message) {
     return message;
 }
 
+// 🔧 自动发现和创建 LID 映射关系
+async function autoDiscoverLidMapping(sessionId, jid, sock) {
+    // 只处理 LID 格式的 JID
+    if (!jid || !jid.endsWith('@lid')) {
+        return;
+    }
+    
+    try {
+        // 检查是否已经有映射关系
+        const { data: existing } = await supabase
+            .from('whatsapp_jid_mapping')
+            .select('*')
+            .eq('session_id', sessionId)
+            .eq('lid_jid', jid)
+            .limit(1);
+        
+        if (existing && existing.length > 0) {
+            // 已经有映射了，不需要再创建
+            return;
+        }
+        
+        // 尝试通过 Baileys 获取联系人信息
+        let phoneNumber = null;
+        let contactName = null;
+        
+        try {
+            // 方法1：从 sock.store 获取联系人信息
+            const contact = sock?.store?.contacts?.[jid];
+            if (contact) {
+                phoneNumber = contact.id?.replace(/[@:].*/g, '');
+                contactName = contact.name || contact.notify || contact.verifiedName;
+            }
+            
+            // 方法2：查询联系人缓存
+            if (!phoneNumber) {
+                const cache = contactCache.get(sessionId);
+                if (cache) {
+                    const cachedContact = cache.get(jid);
+                    if (cachedContact) {
+                        phoneNumber = cachedContact.id?.replace(/[@:].*/g, '');
+                        contactName = cachedContact.name || cachedContact.notify;
+                    }
+                }
+            }
+            
+            // 方法3：从数据库中查找同名联系人
+            if (contactName && !phoneNumber) {
+                const { data: sameNameContacts } = await supabase
+                    .from('whatsapp_contacts')
+                    .select('jid, name')
+                    .eq('session_id', sessionId)
+                    .eq('name', contactName)
+                    .like('jid', '%@s.whatsapp.net');
+                
+                if (sameNameContacts && sameNameContacts.length > 0) {
+                    // 找到了同名的传统 JID
+                    const traditionalJid = sameNameContacts[0].jid;
+                    
+                    console.log(`[LID] 🔗 发现映射关系: ${jid} -> ${traditionalJid} (通过名字匹配: ${contactName})`);
+                    
+                    // 创建映射
+                    await supabase
+                        .from('whatsapp_jid_mapping')
+                        .insert({
+                            session_id: sessionId,
+                            lid_jid: jid,
+                            traditional_jid: traditionalJid
+                        })
+                        .onConflict('session_id, lid_jid')
+                        .ignoreDuplicates();
+                    
+                    return;
+                }
+            }
+            
+            // 方法4：如果从 LID 中提取到了电话号码，构造传统 JID
+            if (phoneNumber && phoneNumber.length >= 8) {
+                const traditionalJid = `${phoneNumber}@s.whatsapp.net`;
+                
+                // 检查这个传统 JID 是否存在于联系人表
+                const { data: traditionalContact } = await supabase
+                    .from('whatsapp_contacts')
+                    .select('jid, name')
+                    .eq('session_id', sessionId)
+                    .eq('jid', traditionalJid)
+                    .limit(1);
+                
+                if (traditionalContact && traditionalContact.length > 0) {
+                    console.log(`[LID] 🔗 发现映射关系: ${jid} -> ${traditionalJid} (通过电话号码)`);
+                    
+                    // 创建映射
+                    await supabase
+                        .from('whatsapp_jid_mapping')
+                        .insert({
+                            session_id: sessionId,
+                            lid_jid: jid,
+                            traditional_jid: traditionalJid
+                        })
+                        .on_conflict(['session_id', 'lid_jid'])
+                        .ignore();
+                }
+            }
+        } catch (error) {
+            console.error(`[LID] ❌ 发现映射关系失败:`, error.message);
+        }
+    } catch (error) {
+        console.error(`[LID] ❌ 自动发现 LID 映射失败:`, error);
+    }
+}
+
 async function startSession(sessionId) {
     if (sessions.has(sessionId) && sessions.get(sessionId).status === 'connected') {
         return;
@@ -547,6 +657,16 @@ async function startSession(sessionId) {
         if (contactsToUpdate.length > 0) {
             await supabase.from('whatsapp_contacts')
                 .upsert(contactsToUpdate, { onConflict: 'session_id,jid' });
+            
+            // 🔧 自动发现 LID 映射关系
+            contactsToUpdate.forEach(contact => {
+                if (contact.jid && contact.jid.endsWith('@lid')) {
+                    // 异步调用，不阻塞主流程
+                    autoDiscoverLidMapping(sessionId, contact.jid, sock).catch(err => {
+                        console.error(`[LID] ❌ 自动发现映射失败 (${contact.jid}):`, err.message);
+                    });
+                }
+            });
         }
     });
     
@@ -870,6 +990,16 @@ async function startSession(sessionId) {
                     
                     await supabase.from('whatsapp_contacts')
                         .upsert(updates, { onConflict: 'session_id,jid', ignoreDuplicates: false }); // We want to update timestamps
+                    
+                    // 🔧 自动发现 LID 映射关系
+                    contactsToUpdate.forEach((ts, jid) => {
+                        if (jid && jid.endsWith('@lid')) {
+                            // 异步调用，不阻塞主流程
+                            autoDiscoverLidMapping(sessionId, jid, sock).catch(err => {
+                                console.error(`[LID] ❌ 自动发现映射失败 (${jid}):`, err.message);
+                            });
+                        }
+                    });
                 }
 
                 // 🔧 只广播实时新消息（type='notify'），历史同步消息（type='append'）静默保存
@@ -1856,6 +1986,7 @@ app.get('/api/session/:id/contacts', async (req, res) => {
     
     // Also try to fetch contacts from Supabase first
     // 🔧 分页获取所有联系人（Supabase 默认限制 1000 行）
+    // 🔧 使用 whatsapp_contacts_merged 视图来自动合并 LID 和传统 JID
     let data = [];
     let currentPage = 0;
     const pageSize = 1000;
@@ -1863,7 +1994,7 @@ app.get('/api/session/:id/contacts', async (req, res) => {
     
     while (hasMore) {
         const { data: pageData, error: pageError } = await supabase
-        .from('whatsapp_contacts')
+        .from('whatsapp_contacts_merged')
         .select('*')
             .eq('session_id', sessionId)
             .range(currentPage * pageSize, (currentPage + 1) * pageSize - 1);
@@ -2273,7 +2404,7 @@ app.get('/api/session/:id/avatar/:jid', async (req, res) => {
     }
 });
 
-// Get Messages
+// Get Messages (支持 LID 和传统 JID 合并)
 app.get('/api/session/:id/messages/:jid', async (req, res) => {
     const sessionId = req.params.id;
     const jid = req.params.jid;
@@ -2281,23 +2412,35 @@ app.get('/api/session/:id/messages/:jid', async (req, res) => {
     console.log(`[API] 📨 获取消息: 会话=${sessionId}, 聊天=${jid}`);
     
     try {
-    const { data, error } = await supabase
-        .from('whatsapp_messages')
-        .select('*')
-            .eq('session_id', sessionId)
-            .eq('remote_jid', jid)
-        .order('message_timestamp', { ascending: true });
+        // 🔧 使用 PostgreSQL 函数来合并 LID 和传统 JID 的消息
+        const { data, error } = await supabase
+            .rpc('get_merged_messages', {
+                p_session_id: sessionId,
+                p_jid: jid
+            });
         
         if (error) {
             console.error(`[API] ❌ 获取消息失败:`, error);
             return res.status(500).json({ error: error.message });
         }
         
+        // 按时间戳排序
+        const sortedData = (data || []).sort((a, b) => 
+            new Date(a.message_timestamp) - new Date(b.message_timestamp)
+        );
+        
         // 🔍 诊断日志：统计 from_me 的消息数量
-        const fromMeCount = data.filter(m => m.from_me === true).length;
-        const fromOthersCount = data.filter(m => m.from_me === false).length;
-        console.log(`[API] ✅ 返回 ${data.length} 条消息 (我发送: ${fromMeCount}, 对方发送: ${fromOthersCount})`);
-    res.json(data);
+        const fromMeCount = sortedData.filter(m => m.from_me === true).length;
+        const fromOthersCount = sortedData.filter(m => m.from_me === false).length;
+        
+        // 🔍 如果有合并的消息，显示来源 JID
+        const uniqueJids = [...new Set(sortedData.map(m => m.remote_jid))];
+        if (uniqueJids.length > 1) {
+            console.log(`[API] 🔗 合并了 ${uniqueJids.length} 个 JID 的消息: ${uniqueJids.join(', ')}`);
+        }
+        
+        console.log(`[API] ✅ 返回 ${sortedData.length} 条消息 (我发送: ${fromMeCount}, 对方发送: ${fromOthersCount})`);
+        res.json(sortedData);
     } catch (error) {
         console.error(`[API] ❌ 获取消息异常:`, error);
         res.status(500).json({ error: error.message });
