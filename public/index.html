@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.56</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.57</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -95,11 +95,11 @@
                     <div class="mt-auto border-t pt-4">
                         <div class="flex justify-between items-center mb-4">
                             <div class="text-sm">
-                                <span class="font-bold text-gray-700">今日額度:</span>
+                                <span class="font-bold text-gray-700">今日已發送:</span>
                                 <span id="daily-limit-text" class="text-green-600 font-bold ml-1">載入中...</span>
                             </div>
                             <div class="text-xs text-gray-400">
-                                系統限制: 50 則/天
+                                無限制
                             </div>
                         </div>
                         
@@ -353,12 +353,12 @@
             
             document.getElementById('selected-date-stats').innerHTML = `
                 <div class="flex justify-between items-center p-3 bg-white rounded shadow-sm">
-                    <span class="text-gray-600">已發送訊息</span>
+                    <span class="text-gray-600">今日已發送</span>
                     <span class="text-xl font-bold text-green-600">${stat.sent}</span>
                 </div>
                 <div class="flex justify-between items-center p-3 bg-white rounded shadow-sm">
-                    <span class="text-gray-600">剩餘額度</span>
-                    <span class="text-xl font-bold ${50 - stat.sent < 0 ? 'text-red-500' : 'text-blue-500'}">${Math.max(0, 50 - stat.sent)}</span>
+                    <span class="text-gray-600">發送狀態</span>
+                    <span class="text-xl font-bold text-blue-500">無限制 ∞</span>
                 </div>
                 <div class="mt-4">
                     <h4 class="font-bold text-gray-700 text-sm mb-2">發送紀錄 (Top 5)</h4>
@@ -1556,16 +1556,11 @@
             try {
                 const res = await fetch(`/api/session/${currentSessionId}/daily-stats`);
                 const stats = await res.json();
-                const remaining = stats.remaining;
                 const el = document.getElementById('daily-limit-text');
-                el.textContent = `${stats.sent} / ${stats.limit} (剩餘: ${remaining})`;
-                el.className = remaining > 0 ? 'text-green-600 font-bold ml-1' : 'text-red-600 font-bold ml-1';
+                el.textContent = `${stats.sent} 則`;
+                el.className = 'text-green-600 font-bold ml-1';
                 
-                if (remaining <= 0) {
-                    document.getElementById('btn-broadcast').disabled = true;
-                    document.getElementById('btn-broadcast').classList.add('opacity-50', 'cursor-not-allowed');
-                    document.getElementById('btn-broadcast').innerHTML = '<span>🚫 今日額度已用完</span>';
-                }
+                // 无限制版本 - 不再禁用发送按钮
             } catch(e) { console.error(e); }
 
             // Render Contacts

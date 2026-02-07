@@ -2633,14 +2633,9 @@ app.post('/api/session/:id/broadcast', upload.single('attachment'), async (req, 
             
         if (countError) throw countError;
         
-        const DAILY_LIMIT = 50;
+        // 无限制版本 - 不再检查每日发送数量限制
+        const DAILY_LIMIT = 999999; // 无限制
         const remaining = DAILY_LIMIT - (count || 0);
-        
-        if (recipients.length > remaining) {
-            return res.status(403).json({ 
-                error: `Daily limit exceeded. You can only send ${remaining} more messages today. (Limit: ${DAILY_LIMIT})` 
-            });
-        }
 
         // 2. Start Sending in Background (to avoid timeout)
         // We respond immediately saying "Started"
@@ -3010,8 +3005,8 @@ app.get('/api/session/:id/daily-stats', async (req, res) => {
         
     if (error) return res.status(500).json({ error: error.message });
     
-    // Default limit
-    const limit = 50;
+    // 无限制版本
+    const limit = 999999;
     
     // Check if count is reasonable? If we just synced history, maybe "from_me" messages today are counted as "sent today"?
     // Actually, synced messages have their original timestamp. But 'created_at' in DB is when they were inserted.
