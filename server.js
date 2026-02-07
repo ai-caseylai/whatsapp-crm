@@ -2382,6 +2382,27 @@ app.get('/api/session/:id/contacts', async (req, res) => {
             });
         }
         
+        // 🔧 为每个联系人添加电话号码字段（用于显示）
+        enrichedData = enrichedData.map(contact => {
+            let phoneNumber = null;
+            
+            if (contact.jid.endsWith('@lid')) {
+                // 对于 LID 格式，尝试从映射表中找到传统 JID
+                const mapping = mappingMap.get(contact.jid);
+                if (mapping && mapping.endsWith('@s.whatsapp.net')) {
+                    phoneNumber = mapping.split('@')[0];
+                }
+            } else if (contact.jid.endsWith('@s.whatsapp.net')) {
+                // 对于传统格式，直接提取电话号码
+                phoneNumber = contact.jid.split('@')[0];
+            }
+            
+            return {
+                ...contact,
+                phone_number: phoneNumber
+            };
+        });
+        
         console.log(`[API] ✅ 返回 ${enrichedData.length} 个联系人（按最新消息时间排序，替换了 ${replacements.size} 个无消息联系人）`);
         res.json(enrichedData);
     } catch (enrichError) {

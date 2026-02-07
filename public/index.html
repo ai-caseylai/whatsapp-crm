@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.51</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.52</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -825,18 +825,35 @@
                 const isGroup = id.endsWith('@g.us');
                 const isLID = id.endsWith('@lid');
                 
-                // Improve display ID logic
+                // Display phone number (formatted)
                 let displayId;
                 if (isGroup) {
                     displayId = '群組 Group';
-                } else if (isLID) {
-                    // For LID contacts, show phone number nicely formatted
-                    const phoneNumber = id.split('@')[0];
-                    displayId = phoneNumber.length > 10 ? 
-                        `+${phoneNumber.substring(0, phoneNumber.length - 10)} ${phoneNumber.substring(phoneNumber.length - 10)}` :
-                        phoneNumber;
                 } else {
-                    displayId = id.split('@')[0];
+                    // Use phone_number from backend if available
+                    const phoneNumber = c.phone_number || id.split('@')[0];
+                    
+                    // Format phone number nicely
+                    if (phoneNumber.length === 11 && phoneNumber.startsWith('852')) {
+                        // Hong Kong format: 852 XXXX XXXX
+                        displayId = `+852 ${phoneNumber.substring(3, 7)} ${phoneNumber.substring(7)}`;
+                    } else if (phoneNumber.length === 12 && phoneNumber.startsWith('852')) {
+                        // Hong Kong format: 852 XXXXX XXXX (for newer numbers)
+                        displayId = `+852 ${phoneNumber.substring(3, 8)} ${phoneNumber.substring(8)}`;
+                    } else if (phoneNumber.length > 10) {
+                        // International format: +XX XXXX XXXX
+                        const countryCode = phoneNumber.substring(0, phoneNumber.length - 8);
+                        const number = phoneNumber.substring(phoneNumber.length - 8);
+                        displayId = `+${countryCode} ${number.substring(0, 4)} ${number.substring(4)}`;
+                    } else if (phoneNumber) {
+                        // Short number or unknown format
+                        displayId = phoneNumber;
+                    } else if (isLID) {
+                        // LID without phone number
+                        displayId = 'LID 聯絡人';
+                    } else {
+                        displayId = id.split('@')[0];
+                    }
                 }
                 
                 // 🆕 优先显示自定义备注名
@@ -854,10 +871,8 @@
                 } else if (isGroup) {
                     // Don't show JID for groups, show friendly placeholder
                     name = "未命名群組 (同步中...)";
-                } else if (isLID) {
-                    // For LID contacts without name, show formatted phone
-                    name = displayId;
                 } else {
+                    // For contacts without name, show formatted phone number
                     name = displayId;
                 } 
                 
