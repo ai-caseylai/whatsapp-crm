@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.59</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.60</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -1452,8 +1452,21 @@
                 }
             }
 
+            // Add action buttons for message operations
+            const messageActions = `
+                <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onclick="showMessageActions(event, '${msg.message_id}', ${isFromMe})" 
+                            class="text-gray-500 hover:text-gray-700 bg-white rounded-full p-1 shadow-md">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path>
+                        </svg>
+                    </button>
+                </div>
+            `;
+
             return `
-                <div class="chat-message rounded-lg mb-2 ${bubbleClass} ${!isSticker ? 'p-3 shadow-sm' : ''}">
+                <div class="chat-message rounded-lg mb-2 ${bubbleClass} ${!isSticker ? 'p-3 shadow-sm' : ''} relative group">
+                    ${messageActions}
                     ${senderInfo}
                     ${displayContent ? `<div class="text-sm text-gray-800 break-words whitespace-pre-wrap">${displayContent}</div>` : ''}
                     ${attachmentHtml}
@@ -1878,6 +1891,114 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // Show message actions menu
+        function showMessageActions(event, messageId, isFromMe) {
+            event.stopPropagation();
+            
+            // Remove any existing menu
+            const existingMenu = document.getElementById('message-actions-menu');
+            if (existingMenu) {
+                existingMenu.remove();
+            }
+            
+            // Create menu
+            const menu = document.createElement('div');
+            menu.id = 'message-actions-menu';
+            menu.className = 'absolute bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50';
+            menu.style.top = `${event.clientY}px`;
+            menu.style.left = `${event.clientX}px`;
+            
+            const menuItems = [];
+            
+            // Add revoke option for messages sent by me
+            if (isFromMe) {
+                menuItems.push(`
+                    <button onclick="revokeMessage('${messageId}')" class="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm flex items-center gap-2">
+                        <svg class="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+                        </svg>
+                        撤回消息（對所有人）
+                    </button>
+                `);
+            }
+            
+            // Add delete option (for all messages)
+            menuItems.push(`
+                <button onclick="deleteMessage('${messageId}')" class="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm flex items-center gap-2">
+                    <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    刪除（僅自己）
+                </button>
+            `);
+            
+            menu.innerHTML = menuItems.join('');
+            document.body.appendChild(menu);
+            
+            // Close menu when clicking outside
+            setTimeout(() => {
+                document.addEventListener('click', function closeMenu() {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                }, 0);
+            }, 0);
+        }
+
+        // Delete message (only for self)
+        async function deleteMessage(messageId) {
+            if (!confirm('確定要刪除這條消息嗎？\n（只從您的裝置刪除，對方仍能看到）')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/session/${currentSessionId}/messages/${messageId}/delete`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Refresh messages
+                    if (currentChatId) {
+                        await refreshMessages(currentChatId);
+                    }
+                } else {
+                    throw new Error(result.error || '刪除失敗');
+                }
+            } catch (error) {
+                console.error('刪除消息失敗:', error);
+                alert('刪除失敗: ' + error.message);
+            }
+        }
+
+        // Revoke message (for everyone)
+        async function revokeMessage(messageId) {
+            if (!confirm('確定要撤回這條消息嗎？\n（撤回後對方也無法看到，僅限48小時內的消息）')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/session/${currentSessionId}/messages/${messageId}/revoke`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Refresh messages
+                    if (currentChatId) {
+                        await refreshMessages(currentChatId);
+                    }
+                    alert('消息已撤回');
+                } else {
+                    throw new Error(result.error || '撤回失敗');
+                }
+            } catch (error) {
+                console.error('撤回消息失敗:', error);
+                alert('撤回失敗: ' + error.message);
+            }
         }
 
     </script>
