@@ -3811,15 +3811,12 @@ app.post('/api/session/:id/messages/:messageId/revoke', async (req, res) => {
             });
         }
         
-        // Send revoke message using Baileys
-        const { key } = await session.sock.sendMessage(message.remote_jid, {
-            protocolMessage: {
-                key: {
-                    remoteJid: message.remote_jid,
-                    fromMe: true,
-                    id: messageId
-                },
-                type: 0  // REVOKE
+        // Send revoke message using Baileys (delete format)
+        await session.sock.sendMessage(message.remote_jid, {
+            delete: {
+                remoteJid: message.remote_jid,
+                fromMe: true,
+                id: messageId
             }
         });
         
@@ -3832,8 +3829,7 @@ app.post('/api/session/:id/messages/:messageId/revoke', async (req, res) => {
         
         res.json({ 
             success: true, 
-            message: '消息已撤回',
-            revokedKey: key
+            message: '消息已撤回'
         });
     } catch (err) {
         console.error('Error revoking message:', err);
@@ -4475,15 +4471,12 @@ app.post('/api/crm/messages/revoke', checkCaseyCRMToken, async (req, res) => {
             });
         }
         
-        // Send revoke protocol message
+        // Send revoke message using Baileys (delete format)
         await session.sock.sendMessage(message.remote_jid, {
-            protocolMessage: {
-                key: {
-                    remoteJid: message.remote_jid,
-                    fromMe: true,
-                    id: messageId
-                },
-                type: 0  // REVOKE
+            delete: {
+                remoteJid: message.remote_jid,
+                fromMe: true,
+                id: messageId
             }
         });
         
