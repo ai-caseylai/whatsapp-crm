@@ -3843,16 +3843,34 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
     const sessionId = req.params.id;
     
     try {
-        // 1. Get all contacts with last_message_time
+        // 1. Get all contacts
         const { data: contacts, error: contactError } = await supabase
             .from('whatsapp_contacts')
             .select('jid, name, custom_name, last_message_time')
-            .eq('session_id', sessionId)
-            .order('last_message_time', { ascending: false, nullsLast: true });
+            .eq('session_id', sessionId);
         
         if (contactError) throw contactError;
         
-        // 2. Get LID mappings
+        // 2. Get actual last message times from messages table
+        const { data: lastMessages, error: msgError } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, message_timestamp')
+            .eq('session_id', sessionId)
+            .order('message_timestamp', { ascending: false });
+        
+        if (msgError) throw msgError;
+        
+        // Create a map of last message times
+        const lastMessageMap = new Map();
+        if (lastMessages) {
+            lastMessages.forEach(msg => {
+                if (!lastMessageMap.has(msg.remote_jid)) {
+                    lastMessageMap.set(msg.remote_jid, msg.message_timestamp);
+                }
+            });
+        }
+        
+        // 3. Get LID mappings
         const { data: mappings, error: mappingError } = await supabase
             .from('whatsapp_jid_mapping')
             .select('lid_jid, traditional_jid')
@@ -3860,7 +3878,7 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
         
         if (mappingError) throw mappingError;
         
-        // 3. Create mapping lookup
+        // 4. Create mapping lookup
         const lidToTraditional = new Map();
         if (mappings) {
             for (const m of mappings) {
@@ -3868,11 +3886,27 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
             }
         }
         
-        // 4. Process contacts and extract phone numbers
+        // 5. Enrich contacts with actual last message time and sort
+        const enrichedContacts = contacts.map(contact => ({
+            ...contact,
+            actual_last_message_time: lastMessageMap.get(contact.jid) || contact.last_message_time
+        }));
+        
+        // Sort by last message time (most recent first)
+        enrichedContacts.sort((a, b) => {
+            const timeA = a.actual_last_message_time;
+            const timeB = b.actual_last_message_time;
+            if (!timeA && !timeB) return 0;
+            if (!timeA) return 1;
+            if (!timeB) return -1;
+            return new Date(timeB) - new Date(timeA);
+        });
+        
+        // 6. Process contacts and extract phone numbers
         const csvRows = [];
         csvRows.push('名稱,電話號碼,最後訊息時間'); // CSV Header
         
-        for (const contact of contacts || []) {
+        for (const contact of enrichedContacts) {
             const displayName = contact.custom_name || contact.name || '';
             let phoneNumber = '';
             
@@ -3906,8 +3940,9 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
                 phoneNumber = contact.jid;
             }
             
-            const lastMessageTime = contact.last_message_time 
-                ? new Date(contact.last_message_time).toLocaleString('zh-HK', { 
+            // Use actual message time
+            const lastMessageTime = contact.actual_last_message_time 
+                ? new Date(contact.actual_last_message_time).toLocaleString('zh-HK', { 
                     year: 'numeric', 
                     month: '2-digit', 
                     day: '2-digit', 
@@ -3927,12 +3962,12 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
             csvRows.push(`${escapeCsvField(displayName)},${escapeCsvField(phoneNumber)},${escapeCsvField(lastMessageTime)}`);
         }
         
-        // 5. Generate CSV content
+        // 7. Generate CSV content
         const csvContent = csvRows.join('\n');
         const timestamp = new Date().toISOString().split('T')[0];
         const filename = `聯絡人列表_${timestamp}.csv`;
         
-        // 6. Send CSV file
+        // 8. Send CSV file
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
         res.send('\uFEFF' + csvContent); // Add BOM for UTF-8
