@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.43</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.44</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -779,7 +779,7 @@
         // 头像缓存 - 避免重复加载
         const avatarCache = new Map();
         
-        // 获取头像 URL
+        // 获取头像 URL（优化：按需加载，使用 Intersection Observer）
         async function getAvatarUrl(jid) {
             if (!currentSessionId) return null;
             
@@ -800,6 +800,34 @@
                 avatarCache.set(jid, null);
                 return null;
             }
+        }
+        
+        // Intersection Observer - 只加载可见区域的头像
+        let avatarObserver = null;
+        
+        function initAvatarObserver() {
+            if (avatarObserver) avatarObserver.disconnect();
+            
+            avatarObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && entry.target.dataset.jid && !entry.target.dataset.loaded) {
+                        const jid = entry.target.dataset.jid;
+                        entry.target.dataset.loaded = 'true';
+                        
+                        // 加载头像
+                        getAvatarUrl(jid).then(url => {
+                            if (url && entry.target) {
+                                const name = entry.target.dataset.name || '?';
+                                entry.target.innerHTML = `<img src="${url}" class="w-full h-full object-cover" alt="${name}" onerror="this.parentElement.innerHTML='${name[0]?.toUpperCase() || '?'}'">`;
+                            }
+                        });
+                    }
+                });
+            }, {
+                root: document.getElementById('contacts-list'),
+                rootMargin: '100px', // 提前 100px 加载
+                threshold: 0.01
+            });
         }
         
         function renderContactsList(contacts) {
@@ -859,7 +887,10 @@
                 return `
                 <div class="p-3 border-b border-gray-100 hover:bg-gray-100 cursor-pointer transition flex items-center group relative">
                     <div onclick="loadChat('${id}', '${name.replace(/'/g, "\\'")}')" class="flex items-center flex-1 overflow-hidden min-w-0">
-                        <div id="avatar-${id.replace(/[^a-zA-Z0-9]/g, '_')}" class="w-12 h-12 rounded-full ${isGroup ? 'bg-indigo-400' : 'bg-gray-300'} flex items-center justify-center mr-3 text-white font-bold shrink-0 overflow-hidden">
+                        <div id="avatar-${id.replace(/[^a-zA-Z0-9]/g, '_')}" 
+                             data-jid="${id}" 
+                             data-name="${name.replace(/"/g, '&quot;')}"
+                             class="w-12 h-12 rounded-full ${isGroup ? 'bg-indigo-400' : 'bg-gray-300'} flex items-center justify-center mr-3 text-white font-bold shrink-0 overflow-hidden">
                             ${name[0].toUpperCase()}
                         </div>
                         <div class="overflow-hidden min-w-0">
@@ -884,19 +915,18 @@
             `;
             }).join('');
             
-            // 异步加载头像
-            contacts.forEach(async c => {
+            // 🆕 使用 Intersection Observer 按需加载头像（只加载可见区域）
+            initAvatarObserver();
+            
+            // 观察所有头像元素
+            contacts.forEach(c => {
                 const id = c.jid || c.id;
                 if (!id) return;
                 
                 const avatarId = `avatar-${id.replace(/[^a-zA-Z0-9]/g, '_')}`;
                 const avatarEl = document.getElementById(avatarId);
-                if (!avatarEl) return;
-                
-                const avatarUrl = await getAvatarUrl(id);
-                if (avatarUrl) {
-                    // 显示真实头像
-                    avatarEl.innerHTML = `<img src="${avatarUrl}" class="w-full h-full object-cover" alt="${c.name || id}" onerror="this.parentElement.innerHTML='${c.name ? c.name[0].toUpperCase() : '?'}'">`;
+                if (avatarEl && avatarObserver) {
+                    avatarObserver.observe(avatarEl);
                 }
             });
         }
