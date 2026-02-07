@@ -2293,7 +2293,10 @@ app.get('/api/session/:id/messages/:jid', async (req, res) => {
             return res.status(500).json({ error: error.message });
         }
         
-        console.log(`[API] ✅ 返回 ${data.length} 条消息`);
+        // 🔍 诊断日志：统计 from_me 的消息数量
+        const fromMeCount = data.filter(m => m.from_me === true).length;
+        const fromOthersCount = data.filter(m => m.from_me === false).length;
+        console.log(`[API] ✅ 返回 ${data.length} 条消息 (我发送: ${fromMeCount}, 对方发送: ${fromOthersCount})`);
     res.json(data);
     } catch (error) {
         console.error(`[API] ❌ 获取消息异常:`, error);
