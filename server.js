@@ -3935,24 +3935,47 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
             return new Date(timeB) - new Date(timeA);
         });
         
-        // 🔧 Deduplicate: Hide LID contacts if they have a mapped traditional JID contact
-        const seenTraditionalJids = new Set();
-        const deduplicatedContacts = [];
+        // 🔧 Deduplicate: Build merged contact map (prefer traditional JID over LID)
+        const contactMap = new Map(); // key = normalized JID (traditional), value = best contact
+        const lidSet = new Set(); // Track which LIDs are already merged
         
         for (const contact of enrichedContacts) {
-            if (contact.jid.includes('@lid')) {
-                // This is a LID contact
-                const mappedTraditional = lidToTraditional.get(contact.jid);
-                if (mappedTraditional && seenTraditionalJids.has(mappedTraditional)) {
-                    // Skip this LID - its traditional JID is already in the list
-                    continue;
+            if (contact.jid.includes('@s.whatsapp.net')) {
+                // Traditional JID - always prefer this
+                const normalizedJid = contact.jid;
+                if (!contactMap.has(normalizedJid)) {
+                    contactMap.set(normalizedJid, contact);
+                    // Mark its LID as merged
+                    const mappedLid = traditionalToLid.get(normalizedJid);
+                    if (mappedLid) {
+                        lidSet.add(mappedLid);
+                    }
                 }
-            } else if (contact.jid.includes('@s.whatsapp.net')) {
-                // Mark this traditional JID as seen
-                seenTraditionalJids.add(contact.jid);
+            } else if (contact.jid.includes('@lid')) {
+                // LID contact - only add if no traditional JID exists
+                const mappedTraditional = lidToTraditional.get(contact.jid);
+                if (mappedTraditional) {
+                    // Has a traditional JID mapping - check if traditional already added
+                    if (!contactMap.has(mappedTraditional)) {
+                        // Traditional not added yet, use LID temporarily (will be replaced if traditional appears later)
+                        contactMap.set(mappedTraditional, contact);
+                    }
+                    lidSet.add(contact.jid);
+                } else {
+                    // No mapping - add LID as standalone if not already added
+                    if (!lidSet.has(contact.jid) && !contactMap.has(contact.jid)) {
+                        contactMap.set(contact.jid, contact);
+                    }
+                }
+            } else {
+                // Group or other type - add directly
+                if (!contactMap.has(contact.jid)) {
+                    contactMap.set(contact.jid, contact);
+                }
             }
-            deduplicatedContacts.push(contact);
         }
+        
+        const deduplicatedContacts = Array.from(contactMap.values());
         
         // 6. Process contacts and extract phone numbers
         const csvRows = [];
