@@ -3894,6 +3894,14 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
             let displayName = contact.custom_name || contact.name;
             let displayJid = contact.jid;
             
+            // 🐛 调试：追踪 91969997
+            if (contact.jid.includes('91969997') || contact.jid.includes('69827679002840')) {
+                console.log(`[CSV DEBUG] Processing contact: ${contact.jid}`);
+                console.log(`  - Original name: ${contact.name}`);
+                console.log(`  - Custom name: ${contact.custom_name}`);
+                console.log(`  - Initial displayName: ${displayName}`);
+            }
+            
             // 🔧 Check for LID mapping and merge message times and names
             if (contact.jid.includes('@s.whatsapp.net')) {
                 // This is a traditional JID, check if it has a mapped LID
@@ -3910,6 +3918,11 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
                     const lidContact = contacts.find(c => c.jid === mappedLid);
                     if (lidContact && !displayName && (lidContact.custom_name || lidContact.name)) {
                         displayName = lidContact.custom_name || lidContact.name;
+                        if (contact.jid.includes('91969997')) {
+                            console.log(`  - Found mapped LID: ${mappedLid}`);
+                            console.log(`  - LID contact name: ${lidContact.name}`);
+                            console.log(`  - Updated displayName from LID: ${displayName}`);
+                        }
                     }
                 }
             } else if (contact.jid.includes('@lid')) {
@@ -3928,8 +3941,21 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
                     if (traditionalContact) {
                         displayName = traditionalContact.custom_name || traditionalContact.name || displayName;
                         displayJid = traditionalContact.jid; // Use traditional JID for display
+                        if (contact.jid.includes('69827679002840')) {
+                            console.log(`  - This is LID, mapped to: ${mappedTraditional}`);
+                            console.log(`  - Traditional contact name: ${traditionalContact.name}`);
+                            console.log(`  - Updated displayName from traditional: ${displayName}`);
+                            console.log(`  - Updated displayJid: ${displayJid}`);
+                        }
                     }
                 }
+            }
+            
+            // 🐛 调试：最终结果
+            if (contact.jid.includes('91969997') || contact.jid.includes('69827679002840')) {
+                console.log(`  - Final displayName: ${displayName}`);
+                console.log(`  - Final displayJid: ${displayJid}`);
+                console.log('---');
             }
             
             return {
