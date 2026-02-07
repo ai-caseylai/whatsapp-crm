@@ -56,7 +56,6 @@ CREATE OR REPLACE FUNCTION get_merged_messages(
     message_type TEXT,
     content TEXT,
     attachment_path TEXT,
-    media_path TEXT,
     full_message_json JSONB,
     created_at TIMESTAMP WITH TIME ZONE,
     updated_at TIMESTAMP WITH TIME ZONE
@@ -75,7 +74,6 @@ BEGIN
         m.message_type,
         m.content,
         m.attachment_path,
-        m.media_path,
         m.full_message_json,
         m.created_at,
         m.updated_at
@@ -98,82 +96,37 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 6. 创建一个视图来显示合并后的联系人列表
+-- 6. 创建一个视图来显示合并后的联系人列表（简化版本，避免超时）
 CREATE OR REPLACE VIEW whatsapp_contacts_merged AS
-SELECT DISTINCT ON (
+SELECT 
     c.session_id,
-    COALESCE(
-        (SELECT mapping.traditional_jid 
-         FROM whatsapp_jid_mapping mapping 
-         WHERE mapping.session_id = c.session_id 
-         AND mapping.lid_jid = c.jid),
-        c.jid
-    )
-)
-    c.session_id,
-    -- 优先使用传统 JID
-    COALESCE(
-        (SELECT mapping.traditional_jid 
-         FROM whatsapp_jid_mapping mapping 
-         WHERE mapping.session_id = c.session_id 
-         AND mapping.lid_jid = c.jid),
-        c.jid
-    ) as jid,
+    -- 如果是 LID，尝试映射到传统 JID；否则保持原样
+    COALESCE(mapping.traditional_jid, c.jid) as jid,
     -- 优先使用传统 JID 的名字
-    COALESCE(
-        (SELECT c2.name 
-         FROM whatsapp_contacts c2
-         JOIN whatsapp_jid_mapping mapping ON c2.jid = mapping.traditional_jid
-         WHERE mapping.session_id = c.session_id 
-         AND mapping.lid_jid = c.jid
-         AND c2.name IS NOT NULL
-         AND c2.name != ''
-         LIMIT 1),
-        c.name
-    ) as name,
-    c.notify,
+    COALESCE(c_traditional.name, c.name) as name,
+    COALESCE(c_traditional.notify, c.notify) as notify,
     c.is_group,
     c.created_at,
-    GREATEST(
-        c.updated_at,
-        COALESCE((SELECT c2.updated_at 
-                  FROM whatsapp_contacts c2
-                  JOIN whatsapp_jid_mapping mapping ON c2.jid = mapping.traditional_jid
-                  WHERE mapping.session_id = c.session_id 
-                  AND mapping.lid_jid = c.jid
-                  LIMIT 1), c.updated_at)
-    ) as updated_at,
-    c.custom_name,
-    -- 合并两个 JID 的最后消息时间（从消息表中直接计算，支持 LID 和传统 JID）
-    (SELECT MAX(m.message_timestamp)
-     FROM whatsapp_messages m
-     WHERE m.session_id = c.session_id
-     AND (
-         m.remote_jid = c.jid
-         OR m.remote_jid IN (
-             SELECT mapping.lid_jid FROM whatsapp_jid_mapping mapping
-             WHERE mapping.session_id = c.session_id
-             AND mapping.traditional_jid = c.jid
-         )
-         OR m.remote_jid IN (
-             SELECT mapping.traditional_jid FROM whatsapp_jid_mapping mapping
-             WHERE mapping.session_id = c.session_id
-             AND mapping.lid_jid = c.jid
-         )
-     )
-    ) as last_message_time,
-    c.phone
+    GREATEST(c.updated_at, COALESCE(c_traditional.updated_at, c.updated_at)) as updated_at,
+    COALESCE(c_traditional.custom_name, c.custom_name) as custom_name,
+    c.last_message_time
 FROM whatsapp_contacts c
+LEFT JOIN whatsapp_jid_mapping mapping 
+    ON mapping.session_id = c.session_id 
+    AND mapping.lid_jid = c.jid
+LEFT JOIN whatsapp_contacts c_traditional
+    ON c_traditional.session_id = c.session_id
+    AND c_traditional.jid = mapping.traditional_jid
 -- 排除那些已经有 LID 映射的传统 JID（避免重复显示）
 WHERE NOT EXISTS (
-    SELECT 1 FROM whatsapp_jid_mapping mapping
-    WHERE mapping.session_id = c.session_id
-    AND mapping.traditional_jid = c.jid
+    SELECT 1 FROM whatsapp_jid_mapping m2
+    WHERE m2.session_id = c.session_id
+    AND m2.traditional_jid = c.jid
     AND c.jid LIKE '%@s.whatsapp.net'
     AND EXISTS (
         SELECT 1 FROM whatsapp_contacts c_lid
         WHERE c_lid.session_id = c.session_id
-        AND c_lid.jid = mapping.lid_jid
+        AND c_lid.jid = m2.lid_jid
     )
 );
 

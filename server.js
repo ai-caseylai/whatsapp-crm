@@ -1984,9 +1984,7 @@ app.post('/api/session/:id/add-contact', async (req, res) => {
 app.get('/api/session/:id/contacts', async (req, res) => {
     const sessionId = req.params.id;
     
-    // Also try to fetch contacts from Supabase first
-    // 🔧 分页获取所有联系人（Supabase 默认限制 1000 行）
-    // 🔧 使用 whatsapp_contacts_merged 视图来自动合并 LID 和传统 JID
+    // 🔧 分页获取所有联系人（直接从 whatsapp_contacts 表，不用视图）
     let data = [];
     let currentPage = 0;
     const pageSize = 1000;
@@ -1994,7 +1992,7 @@ app.get('/api/session/:id/contacts', async (req, res) => {
     
     while (hasMore) {
         const { data: pageData, error: pageError } = await supabase
-        .from('whatsapp_contacts_merged')
+        .from('whatsapp_contacts')
         .select('*')
             .eq('session_id', sessionId)
             .range(currentPage * pageSize, (currentPage + 1) * pageSize - 1);
@@ -2007,7 +2005,6 @@ app.get('/api/session/:id/contacts', async (req, res) => {
         if (pageData && pageData.length > 0) {
             data.push(...pageData);
             currentPage++;
-            // 如果返回的数据少于 pageSize，说明没有更多数据了
             if (pageData.length < pageSize) {
                 hasMore = false;
             }
@@ -2017,6 +2014,73 @@ app.get('/api/session/:id/contacts', async (req, res) => {
     }
     
     console.log(`[API] 📊 从数据库获取了 ${data.length} 个联系人（共 ${currentPage} 页）`);
+    
+    // 🔧 获取 JID 映射关系
+    const { data: mappings, error: mappingError } = await supabase
+        .from('whatsapp_jid_mapping')
+        .select('*')
+        .eq('session_id', sessionId);
+    
+    if (mappingError) {
+        console.error(`[API] ⚠️ 获取 JID 映射失败:`, mappingError);
+    }
+    
+    // 🔧 在应用层处理 LID 合并
+    const mappingMap = new Map();
+    (mappings || []).forEach(m => {
+        mappingMap.set(m.lid_jid, m.traditional_jid);
+    });
+    
+    // 创建合并后的联系人列表
+    const mergedContacts = new Map();
+    const lidToHide = new Set(); // 需要隐藏的 LID 联系人
+    
+    data.forEach(contact => {
+        const jid = contact.jid;
+        
+        // 如果是 LID，检查是否有映射
+        if (jid.endsWith('@lid') && mappingMap.has(jid)) {
+            const traditionalJid = mappingMap.get(jid);
+            lidToHide.add(jid);
+            
+            // 查找对应的传统 JID 联系人
+            const traditionalContact = data.find(c => c.jid === traditionalJid);
+            
+            if (traditionalContact) {
+                // 使用传统 JID，合并信息
+                const merged = {
+                    ...traditionalContact,
+                    // 如果传统联系人的 last_message_time 为空，使用 LID 的
+                    last_message_time: traditionalContact.last_message_time || contact.last_message_time,
+                    updated_at: new Date(Math.max(
+                        new Date(traditionalContact.updated_at || 0),
+                        new Date(contact.updated_at || 0)
+                    )).toISOString()
+                };
+                mergedContacts.set(traditionalJid, merged);
+            } else {
+                // 传统 JID 不存在，使用 LID（但 JID 显示为传统格式）
+                mergedContacts.set(traditionalJid, {
+                    ...contact,
+                    jid: traditionalJid
+                });
+            }
+        } else if (!jid.endsWith('@lid')) {
+            // 传统 JID，直接添加（如果还没有的话）
+            if (!mergedContacts.has(jid)) {
+                mergedContacts.set(jid, contact);
+            }
+        } else {
+            // LID 但没有映射，保留
+            mergedContacts.set(jid, contact);
+        }
+    });
+    
+    // 转换回数组
+    data = Array.from(mergedContacts.values());
+    
+    console.log(`[API] 🔗 处理 LID 映射: ${mappings?.length || 0} 个映射，隐藏了 ${lidToHide.size} 个 LID 联系人，最终 ${data.length} 个联系人`);
+    
     const error = null;
         
     // If empty, use Store to populate
