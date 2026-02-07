@@ -3535,38 +3535,43 @@ app.get('/api/session/:id/lid-mappings', async (req, res) => {
     }
 });
 
-// Clean up empty contacts (no messages, no name)
+// Clean up empty contacts (no messages, no name) - All formats
 app.post('/api/session/:id/cleanup-empty-contacts', async (req, res) => {
     const sessionId = req.params.id;
+    const { includeTraditional = true } = req.body; // 可选：是否也清理传统 JID
     
     try {
-        // Step 1: Count empty contacts
-        const { count: beforeCount, error: countError } = await supabase
+        // Step 1: Find ALL contacts with no name and not in group
+        const { data: allNoNameContacts, error: fetchError } = await supabase
             .from('whatsapp_contacts')
-            .select('jid', { count: 'exact', head: true })
+            .select('jid, name')
             .eq('session_id', sessionId)
-            .like('jid', '%@lid')
-            .is('name', null)
-            .eq('is_group', false);
-        
-        if (countError) throw countError;
-        
-        // Step 2: Find contacts with no messages
-        const { data: allEmptyContacts, error: fetchError } = await supabase
-            .from('whatsapp_contacts')
-            .select('jid')
-            .eq('session_id', sessionId)
-            .like('jid', '%@lid')
             .is('name', null)
             .eq('is_group', false);
         
         if (fetchError) throw fetchError;
         
-        // Step 3: Check which ones have messages
-        const emptyJids = (allEmptyContacts || []).map(c => c.jid);
-        const contactsToDelete = [];
+        console.log(`找到 ${allNoNameContacts.length} 个没有名字的联系人`);
         
-        for (const jid of emptyJids) {
+        // Step 2: Separate LID and traditional JIDs
+        const lidJids = [];
+        const traditionalJids = [];
+        
+        for (const contact of allNoNameContacts || []) {
+            if (contact.jid.endsWith('@lid')) {
+                lidJids.push(contact.jid);
+            } else if (contact.jid.endsWith('@s.whatsapp.net')) {
+                traditionalJids.push(contact.jid);
+            }
+        }
+        
+        console.log(`LID 格式: ${lidJids.length} 个, 传统格式: ${traditionalJids.length} 个`);
+        
+        // Step 3: Check which ones have messages
+        const contactsToDelete = [];
+        const jidsToCheck = includeTraditional ? [...lidJids, ...traditionalJids] : lidJids;
+        
+        for (const jid of jidsToCheck) {
             const { count, error } = await supabase
                 .from('whatsapp_messages')
                 .select('message_id', { count: 'exact', head: true })
@@ -3578,18 +3583,27 @@ app.post('/api/session/:id/cleanup-empty-contacts', async (req, res) => {
             }
         }
         
-        // Step 4: Delete empty contacts
+        console.log(`需要删除: ${contactsToDelete.length} 个空联系人`);
+        
+        // Step 4: Delete empty contacts in batches
         if (contactsToDelete.length > 0) {
-            const { error: deleteError } = await supabase
-                .from('whatsapp_contacts')
-                .delete()
-                .eq('session_id', sessionId)
-                .in('jid', contactsToDelete);
-            
-            if (deleteError) throw deleteError;
+            // Supabase has a limit on array size, so batch delete
+            const batchSize = 100;
+            for (let i = 0; i < contactsToDelete.length; i += batchSize) {
+                const batch = contactsToDelete.slice(i, i + batchSize);
+                const { error: deleteError } = await supabase
+                    .from('whatsapp_contacts')
+                    .delete()
+                    .eq('session_id', sessionId)
+                    .in('jid', batch);
+                
+                if (deleteError) {
+                    console.error(`删除批次 ${i}-${i+batch.length} 失败:`, deleteError);
+                }
+            }
         }
         
-        // Step 5: Count after cleanup
+        // Step 5: Count remaining no-name contacts
         const { count: afterCount, error: afterCountError } = await supabase
             .from('whatsapp_contacts')
             .select('jid', { count: 'exact', head: true })
@@ -3601,10 +3615,14 @@ app.post('/api/session/:id/cleanup-empty-contacts', async (req, res) => {
         
         res.json({ 
             success: true, 
-            before: beforeCount || 0,
+            found: jidsToCheck.length,
             deleted: contactsToDelete.length,
-            after: afterCount || 0,
-            message: `已刪除 ${contactsToDelete.length} 個空聯絡人`
+            remaining: afterCount || 0,
+            details: {
+                lid_checked: lidJids.length,
+                traditional_checked: includeTraditional ? traditionalJids.length : 0
+            },
+            message: `已刪除 ${contactsToDelete.length} 個空聯絡人，剩餘 ${afterCount || 0} 個（有消息記錄需要映射）`
         });
     } catch (err) {
         console.error('Error cleaning up empty contacts:', err);

@@ -265,22 +265,34 @@
         }
         
         async function cleanupEmptyContacts() {
-            if (!confirm('確定要清理所有空的數字聯絡人嗎？\n\n這將刪除所有沒有消息記錄的 LID 聯絡人。')) {
-                return;
-            }
+            const includeTraditional = confirm(
+                '確定要清理所有空的數字聯絡人嗎？\n\n' +
+                '這將刪除所有沒有消息記錄的聯絡人（LID 和傳統格式）。\n\n' +
+                '點擊「確定」= 清理所有格式\n' +
+                '點擊「取消」= 只清理 LID 格式'
+            );
             
             try {
                 showStatus('正在清理空聯絡人...', 'info');
                 
                 const response = await fetch(`/api/session/${SESSION_ID}/cleanup-empty-contacts`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ includeTraditional })
                 });
                 
                 const result = await response.json();
                 
                 if (response.ok) {
-                    showStatus(`清理完成！刪除了 ${result.deleted} 個空聯絡人`, 'success');
+                    const msg = `清理完成！\n` +
+                        `- 檢查: ${result.found} 個\n` +
+                        `- 刪除: ${result.deleted} 個\n` +
+                        `- 保留: ${result.remaining} 個（有消息記錄）`;
+                    showStatus(msg, 'success');
                     await loadCandidates();
+                    
+                    // Show detailed alert
+                    alert(result.message);
                 } else {
                     throw new Error(result.error || '未知錯誤');
                 }
