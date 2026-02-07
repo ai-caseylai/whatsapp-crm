@@ -1,428 +1,241 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp CRM 管理面板</title>
+    <title>管理設置 - WhatsApp CRM</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .tab-active { @apply border-b-2 border-blue-500 text-blue-600; }
-        .log-container { font-family: 'Courier New', monospace; font-size: 12px; }
-        .status-online { @apply bg-green-100 text-green-800; }
-        .status-offline { @apply bg-red-100 text-red-800; }
-        .btn-primary { @apply bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded transition; }
-        .btn-danger { @apply bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded transition; }
-        .btn-success { @apply bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded transition; }
-    </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
-    <div id="login-screen" class="fixed inset-0 bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-        <div class="bg-white p-8 rounded-lg shadow-2xl w-96">
-            <h1 class="text-3xl font-bold mb-6 text-center text-gray-800">🎛️ 管理面板登录</h1>
-            <input type="password" id="password" placeholder="输入管理密码" 
-                class="w-full px-4 py-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <button onclick="login()" class="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 rounded-lg font-bold transition">
-                登录
-            </button>
-            <p class="text-sm text-gray-500 mt-4 text-center">密码：whatsapp-admin-2026</p>
-        </div>
-    </div>
-
-    <div id="main-content" class="hidden">
+    <div class="container mx-auto p-6">
         <!-- Header -->
-        <div class="bg-white shadow-md">
-            <div class="container mx-auto px-4 py-4 flex justify-between items-center">
-                <h1 class="text-2xl font-bold text-gray-800">🎛️ WhatsApp CRM 管理面板</h1>
-                <div class="flex items-center gap-4">
-                    <span class="text-sm text-gray-600" id="current-time"></span>
-                    <button onclick="logout()" class="text-sm text-red-600 hover:text-red-800">登出</button>
-                </div>
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex justify-between items-center">
+                <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-2">
+                    <svg class="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    </svg>
+                    WhatsApp CRM 管理設置
+                </h1>
+                <a href="/" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition">
+                    ← 返回主頁
+                </a>
             </div>
+            <p class="text-gray-600 mt-2">Session ID: <span id="sessionId" class="font-mono font-bold"></span></p>
         </div>
 
-        <!-- Tabs -->
-        <div class="bg-white border-b">
-            <div class="container mx-auto px-4">
-                <div class="flex gap-4">
-                    <button onclick="switchTab('status')" class="tab-button px-4 py-3 font-medium tab-active">
-                        📊 服务状态
-                    </button>
-                    <button onclick="switchTab('logs')" class="tab-button px-4 py-3 font-medium">
-                        📋 实时日志
-                    </button>
-                    <button onclick="switchTab('history')" class="tab-button px-4 py-3 font-medium">
-                        📜 部署历史
-                    </button>
-                    <button onclick="switchTab('system')" class="tab-button px-4 py-3 font-medium">
-                        💻 系统信息
-                    </button>
-                </div>
-            </div>
-        </div>
+        <!-- Status Message -->
+        <div id="statusMessage" class="mb-4 hidden"></div>
 
-        <div class="container mx-auto px-4 py-6">
-            <!-- Status Tab -->
-            <div id="tab-status" class="tab-content">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                    <div class="bg-white p-6 rounded-lg shadow">
-                        <h2 class="text-xl font-bold mb-4">💬 WhatsApp Bot</h2>
-                        <div id="status-bot" class="space-y-2"></div>
-                        <button onclick="restartService('whatsapp-bot')" class="btn-primary mt-4">
-                            🔄 重启服务
-                        </button>
-                    </div>
-                    <div class="bg-white p-6 rounded-lg shadow">
-                        <h2 class="text-xl font-bold mb-4">🪝 Webhook 服务</h2>
-                        <div id="status-webhook" class="space-y-2"></div>
-                        <button onclick="restartService('whatsapp-webhook')" class="btn-primary mt-4">
-                            🔄 重启服务
-                        </button>
-                    </div>
-                </div>
-                <div class="bg-white p-6 rounded-lg shadow">
-                    <h2 class="text-xl font-bold mb-4">🚀 快速操作</h2>
-                    <div class="flex flex-wrap gap-3">
-                        <button onclick="restartService('all')" class="btn-danger">
-                            🔄 重启所有服务
-                        </button>
-                        <button onclick="triggerDeploy()" class="btn-success">
-                            📥 手动部署
-                        </button>
-                        <button onclick="refreshStatus()" class="btn-primary">
-                            🔄 刷新状态
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Logs Tab -->
-            <div id="tab-logs" class="tab-content hidden">
-                <div class="bg-white p-6 rounded-lg shadow mb-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h2 class="text-xl font-bold">📋 实时日志</h2>
-                        <div class="flex gap-2">
-                            <button onclick="switchLogService('whatsapp-bot')" 
-                                id="log-btn-bot" class="px-4 py-2 bg-blue-500 text-white rounded">
-                                WhatsApp Bot
-                            </button>
-                            <button onclick="switchLogService('whatsapp-webhook')" 
-                                id="log-btn-webhook" class="px-4 py-2 bg-gray-300 text-gray-700 rounded">
-                                Webhook
-                            </button>
-                            <button onclick="clearLogs()" class="px-4 py-2 bg-red-500 text-white rounded">
-                                清空
-                            </button>
-                        </div>
-                    </div>
-                    <div id="log-output" class="log-container bg-gray-900 text-green-400 p-4 rounded h-96 overflow-auto">
-                        <div class="text-gray-500">正在加载日志...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- History Tab -->
-            <div id="tab-history" class="tab-content hidden">
-                <div class="bg-white p-6 rounded-lg shadow">
-                    <div class="flex justify-between items-center mb-4">
-                        <h2 class="text-xl font-bold">📜 Git 提交历史</h2>
-                        <button onclick="refreshHistory()" class="btn-primary">
-                            🔄 刷新
-                        </button>
-                    </div>
-                    <div id="git-history" class="space-y-3"></div>
-                </div>
-                <div class="bg-white p-6 rounded-lg shadow mt-6">
-                    <h2 class="text-xl font-bold mb-4">🔗 GitHub Webhook</h2>
-                    <a href="https://github.com/ai-caseylai/whatsapp-crm/settings/hooks" 
-                        target="_blank" class="btn-primary inline-block">
-                        📝 查看 Webhook 配置
-                    </a>
-                </div>
-            </div>
-
-            <!-- System Tab -->
-            <div id="tab-system" class="tab-content hidden">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="bg-white p-6 rounded-lg shadow">
-                        <h3 class="text-lg font-bold mb-3">⏱️ 系统运行时间</h3>
-                        <pre id="sys-uptime" class="bg-gray-100 p-3 rounded text-sm"></pre>
-                    </div>
-                    <div class="bg-white p-6 rounded-lg shadow">
-                        <h3 class="text-lg font-bold mb-3">💾 内存使用</h3>
-                        <pre id="sys-memory" class="bg-gray-100 p-3 rounded text-sm"></pre>
-                    </div>
-                    <div class="bg-white p-6 rounded-lg shadow">
-                        <h3 class="text-lg font-bold mb-3">💿 磁盘使用</h3>
-                        <pre id="sys-disk" class="bg-gray-100 p-3 rounded text-sm"></pre>
-                    </div>
-                    <div class="bg-white p-6 rounded-lg shadow">
-                        <h3 class="text-lg font-bold mb-3">🌿 Git 状态</h3>
-                        <div class="bg-gray-100 p-3 rounded text-sm">
-                            <div><strong>分支:</strong> <span id="sys-git-branch"></span></div>
-                            <div class="mt-2"><strong>状态:</strong></div>
-                            <pre id="sys-git-status" class="mt-1"></pre>
-                        </div>
-                    </div>
-                </div>
-                <button onclick="refreshSystem()" class="btn-primary mt-6">
-                    🔄 刷新系统信息
+        <!-- Management Sections -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Media Management -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    媒體管理
+                </h2>
+                <p class="text-gray-600 text-sm mb-4">下載缺失的圖片和影片</p>
+                <button onclick="downloadAllMedia()" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                    下載所有媒體
                 </button>
             </div>
+
+            <!-- Contact Management -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                    </svg>
+                    聯絡人管理
+                </h2>
+                <p class="text-gray-600 text-sm mb-4">從 WhatsApp 獲取聯絡人名稱</p>
+                <button onclick="refreshUnknownContacts()" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg transition mb-2">
+                    從 WhatsApp 獲取
+                </button>
+                <button onclick="extractNamesFromGroups()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                    從群組提取名稱
+                </button>
+            </div>
+
+            <!-- LID Mapping -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    LID 映射與清理
+                </h2>
+                <p class="text-gray-600 text-sm mb-4">管理 LID 映射、清理空聯絡人</p>
+                <a href="/lid-mapper.html" class="block w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg transition text-center">
+                    進入 LID 管理
+                </a>
+            </div>
+
+            <!-- Sync Management -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    同步管理
+                </h2>
+                <p class="text-gray-600 text-sm mb-4">強制重新同步完整歷史</p>
+                <button onclick="resync()" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                    強制同步
+                </button>
+            </div>
+
+            <!-- Marketing -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"></path>
+                    </svg>
+                    群發行銷
+                </h2>
+                <p class="text-gray-600 text-sm mb-4">批量發送消息給聯絡人</p>
+                <button onclick="openMarketing()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                    開啟群發功能
+                </button>
+            </div>
+
         </div>
     </div>
 
     <script>
-        let token = null;
-        let currentLogService = 'whatsapp-bot';
-        let logEventSource = null;
+        const SESSION_ID = 'sess_9ai6rbwfe_1770361159106';
+        document.getElementById('sessionId').textContent = SESSION_ID;
 
-        // 时间显示
-        setInterval(() => {
-            document.getElementById('current-time').textContent = new Date().toLocaleString('zh-CN');
-        }, 1000);
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.className = `mb-4 p-4 rounded-lg ${
+                type === 'success' ? 'bg-green-100 text-green-800' :
+                type === 'error' ? 'bg-red-100 text-red-800' :
+                'bg-blue-100 text-blue-800'
+            }`;
+            statusDiv.textContent = message;
+            statusDiv.classList.remove('hidden');
+            
+            setTimeout(() => {
+                statusDiv.classList.add('hidden');
+            }, 5000);
+        }
 
-        // 登录
-        async function login() {
-            const password = document.getElementById('password').value;
-            if (!password) {
-                alert('请输入密码');
+        async function downloadAllMedia() {
+            if (!confirm('確定要下載所有缺失的媒體文件嗎？\n這可能需要一些時間。')) {
                 return;
             }
             
             try {
-                console.log('正在登录...');
-                const res = await fetch('/api/admin/auth', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    body: JSON.stringify({ password })
+                showStatus('正在下載所有媒體...', 'info');
+                
+                const response = await fetch(`/api/session/${SESSION_ID}/download-all-media`, {
+                    method: 'POST'
                 });
                 
-                console.log('响应状态:', res.status);
-                console.log('Content-Type:', res.headers.get('content-type'));
+                const result = await response.json();
                 
-                // 先获取响应文本
-                const text = await res.text();
-                console.log('响应内容:', text);
-                
-                // 尝试解析 JSON
-                let data;
-                try {
-                    data = JSON.parse(text);
-                } catch (parseError) {
-                    console.error('JSON 解析失败:', parseError);
-                    console.error('响应内容:', text.substring(0, 200));
-                    throw new Error('服务器返回了无效的 JSON 响应');
-                }
-                
-                if (data.token) {
-                    token = data.token;
-                    console.log('登录成功，token:', token);
-                    document.getElementById('login-screen').classList.add('hidden');
-                    document.getElementById('main-content').classList.remove('hidden');
-                    init();
+                if (response.ok) {
+                    showStatus(`下載完成！成功: ${result.success}, 失敗: ${result.failed}`, 'success');
                 } else {
-                    alert('密码错误：' + (data.error || '未知错误'));
+                    throw new Error(result.error || '未知錯誤');
                 }
-            } catch (e) {
-                console.error('登录错误:', e);
-                alert('登录失败: ' + e.message + '\n\n请查看浏览器控制台 (F12) 获取详细信息');
+            } catch (err) {
+                console.error('Error downloading media:', err);
+                showStatus('下載失敗: ' + err.message, 'error');
             }
         }
 
-        // 登出
-        function logout() {
-            token = null;
-            document.getElementById('login-screen').classList.remove('hidden');
-            document.getElementById('main-content').classList.add('hidden');
-            if (logEventSource) logEventSource.close();
-        }
-
-        // 初始化
-        function init() {
-            refreshStatus();
-            refreshHistory();
-            refreshSystem();
-        }
-
-        // 切换标签页
-        function switchTab(tabName) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
-            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('tab-active'));
-            document.getElementById('tab-' + tabName).classList.remove('hidden');
-            event.target.classList.add('tab-active');
-            
-            if (tabName === 'logs') {
-                loadLogs();
-            }
-        }
-
-        // API 请求辅助函数
-        async function apiRequest(url, options = {}) {
-            const res = await fetch(url, {
-                ...options,
-                headers: {
-                    ...options.headers,
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/json'
-                }
-            });
-            
-            // 检查响应状态
-            if (!res.ok) {
-                const text = await res.text();
-                console.error('API 错误:', res.status, text);
-                throw new Error(`HTTP ${res.status}: ${text.substring(0, 100)}`);
+        async function refreshUnknownContacts() {
+            if (!confirm('確定要從 WhatsApp 獲取所有未知聯絡人的名稱嗎？')) {
+                return;
             }
             
-            // 检查 Content-Type
-            const contentType = res.headers.get('content-type');
-            if (!contentType || !contentType.includes('application/json')) {
-                const text = await res.text();
-                console.error('非 JSON 响应:', text.substring(0, 200));
-                throw new Error('服务器返回了非 JSON 响应');
-            }
-            
-            return await res.json();
-        }
-
-        // 刷新服务状态
-        async function refreshStatus() {
             try {
-                const data = await apiRequest('/api/admin/status');
-                const bot = data.processes.find(p => p.name === 'whatsapp-bot');
-                const webhook = data.processes.find(p => p.name === 'whatsapp-webhook');
+                showStatus('正在從 WhatsApp 獲取聯絡人名稱...', 'info');
                 
-                displayServiceStatus('status-bot', bot);
-                displayServiceStatus('status-webhook', webhook);
-            } catch (e) {
-                console.error('Failed to refresh status:', e);
+                const response = await fetch(`/api/session/${SESSION_ID}/refresh-unknown-contacts`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showStatus(result.message || '獲取完成', 'success');
+                } else {
+                    throw new Error(result.error || '未知錯誤');
+                }
+            } catch (err) {
+                console.error('Error refreshing contacts:', err);
+                showStatus('獲取失敗: ' + err.message, 'error');
             }
         }
 
-        function displayServiceStatus(elementId, process) {
-            if (!process) return;
-            const html = `
-                <div class="flex items-center gap-2">
-                    <span class="px-2 py-1 rounded text-sm ${process.pm2_env.status === 'online' ? 'status-online' : 'status-offline'}">
-                        ${process.pm2_env.status === 'online' ? '🟢 运行中' : '🔴 已停止'}
-                    </span>
-                </div>
-                <div class="text-sm text-gray-600 mt-2">
-                    <div><strong>PID:</strong> ${process.pid}</div>
-                    <div><strong>内存:</strong> ${(process.monit.memory / 1024 / 1024).toFixed(1)} MB</div>
-                    <div><strong>CPU:</strong> ${process.monit.cpu}%</div>
-                    <div><strong>重启次数:</strong> ${process.pm2_env.restart_time}</div>
-                    <div><strong>运行时间:</strong> ${formatUptime(process.pm2_env.pm_uptime)}</div>
-                </div>
-            `;
-            document.getElementById(elementId).innerHTML = html;
-        }
-
-        function formatUptime(timestamp) {
-            const seconds = Math.floor((Date.now() - timestamp) / 1000);
-            const days = Math.floor(seconds / 86400);
-            const hours = Math.floor((seconds % 86400) / 3600);
-            const minutes = Math.floor((seconds % 3600) / 60);
-            return `${days}天 ${hours}小时 ${minutes}分钟`;
-        }
-
-        // 重启服务
-        async function restartService(service) {
-            if (!confirm(`确定要重启 ${service} 吗？`)) return;
-            try {
-                const data = await apiRequest(`/api/admin/restart/${service}`, { method: 'POST' });
-                alert('重启成功！');
-                setTimeout(refreshStatus, 2000);
-            } catch (e) {
-                alert('重启失败: ' + e.message);
+        async function extractNamesFromGroups() {
+            if (!confirm('確定要從所有消息中提取聯絡人名稱嗎？')) {
+                return;
             }
-        }
-
-        // 触发部署
-        async function triggerDeploy() {
-            if (!confirm('确定要手动触发部署吗？')) return;
-            try {
-                const data = await apiRequest('/api/admin/deploy', { method: 'POST' });
-                alert('部署已触发！');
-                setTimeout(refreshStatus, 2000);
-            } catch (e) {
-                alert('部署失败: ' + e.message);
-            }
-        }
-
-        // 切换日志服务
-        function switchLogService(service) {
-            currentLogService = service;
-            document.querySelectorAll('[id^="log-btn-"]').forEach(btn => {
-                btn.className = 'px-4 py-2 bg-gray-300 text-gray-700 rounded';
-            });
-            document.getElementById(`log-btn-${service}`).className = 'px-4 py-2 bg-blue-500 text-white rounded';
-            loadLogs();
-        }
-
-        // 加载日志
-        function loadLogs() {
-            if (logEventSource) logEventSource.close();
-            document.getElementById('log-output').innerHTML = '<div class="text-gray-500">正在连接日志流...</div>';
             
-            logEventSource = new EventSource(`/api/admin/logs/${currentLogService}/stream`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            
-            logEventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                const logOutput = document.getElementById('log-output');
-                const logEntry = document.createElement('div');
-                logEntry.textContent = data.log || data.error;
-                logOutput.appendChild(logEntry);
-                logOutput.scrollTop = logOutput.scrollHeight;
-            };
-            
-            logEventSource.onerror = () => {
-                document.getElementById('log-output').innerHTML += '<div class="text-red-500">日志连接断开</div>';
-                logEventSource.close();
-            };
-        }
-
-        function clearLogs() {
-            document.getElementById('log-output').innerHTML = '';
-        }
-
-        // 刷新历史
-        async function refreshHistory() {
             try {
-                const data = await apiRequest('/api/admin/git/history?lines=20');
-                const html = data.commits.map(commit => `
-                    <div class="flex items-start gap-3 p-3 bg-gray-50 rounded hover:bg-gray-100">
-                        <code class="text-blue-600 font-mono text-sm">${commit.hash}</code>
-                        <span class="flex-1">${commit.message}</span>
-                    </div>
-                `).join('');
-                document.getElementById('git-history').innerHTML = html;
-            } catch (e) {
-                console.error('Failed to refresh history:', e);
+                showStatus('正在提取聯絡人名稱...', 'info');
+                
+                const response = await fetch(`/api/session/${SESSION_ID}/extract-names-from-groups`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showStatus(`提取完成！更新: ${result.updated}`, 'success');
+                } else {
+                    throw new Error(result.error || '未知錯誤');
+                }
+            } catch (err) {
+                console.error('Error extracting names:', err);
+                showStatus('提取失敗: ' + err.message, 'error');
             }
         }
 
-        // 刷新系统信息
-        async function refreshSystem() {
+        async function resync() {
+            if (!confirm('確定要清除所有資料並重新同步嗎？\n⚠️ 這將清除所有聯絡人和消息資料！')) {
+                return;
+            }
+            
+            if (!confirm('⚠️ 最後確認：這個操作不可逆！\n確定要繼續嗎？')) {
+                return;
+            }
+            
             try {
-                const data = await apiRequest('/api/admin/system');
-                document.getElementById('sys-uptime').textContent = data.uptime;
-                document.getElementById('sys-memory').textContent = data.memory;
-                document.getElementById('sys-disk').textContent = data.disk;
-                document.getElementById('sys-git-branch').textContent = data.git_branch.trim();
-                document.getElementById('sys-git-status').textContent = data.git_status.trim() || '工作目录干净';
-            } catch (e) {
-                console.error('Failed to refresh system info:', e);
+                showStatus('正在清除資料...', 'info');
+                
+                const response = await fetch(`/api/session/${SESSION_ID}/sync-recent`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showStatus('重新同步已開始！請等待同步完成。', 'success');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 2000);
+                } else {
+                    throw new Error(result.error || '未知錯誤');
+                }
+            } catch (err) {
+                console.error('Error resyncing:', err);
+                showStatus('同步失敗: ' + err.message, 'error');
             }
         }
 
-        // 自动刷新状态
-        setInterval(refreshStatus, 10000);
+        function openMarketing() {
+            window.location.href = '/?marketing=1';
+        }
     </script>
 </body>
 </html>
