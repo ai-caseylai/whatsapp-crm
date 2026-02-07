@@ -876,12 +876,16 @@ async function startSession(sessionId) {
                 // type='notify': 实时接收的新消息（用户刚发的）→ 自动打开聊天
                 // type='append': 历史同步的旧消息（从服务器拉取的）→ 静默保存到数据库
                 if (type === 'notify') {
+                    // 🆕 等待一小段时间（200ms）确保媒体文件已写入磁盘
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    
                     validMessages.forEach(m => {
                         sendWebhook('message', { sessionId, message: m });
                         
                         // Broadcast via WebSocket for real-time updates
                         if (global.broadcastMessage) {
-                            console.log(`[${sessionId}] 📤 广播实时新消息到前端: ${m.remote_jid}`);
+                            const hasMedia = m.attachment_path || ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(m.message_type);
+                            console.log(`[${sessionId}] 📤 广播实时新消息到前端: ${m.remote_jid}${hasMedia ? ' (含媒体)' : ''}`);
                             global.broadcastMessage(sessionId, m.remote_jid, m);
                         }
                     });

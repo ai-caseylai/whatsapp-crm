@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.42</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.43</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -1218,7 +1218,7 @@
                              <img src="${finalMediaPath}" 
                                   class="rounded-lg max-w-sm max-h-96 cursor-pointer shadow-md hover:shadow-xl transition-all hover:scale-105" 
                                   onclick="window.open('${finalMediaPath}', '_blank')"
-                                  onerror="this.parentElement.innerHTML='<div class=\\'text-gray-400 text-sm\\'>圖片載入失敗</div>'" />
+                                  onerror="if(this.retryCount===undefined){this.retryCount=0;}if(this.retryCount<3){this.retryCount++;setTimeout(()=>{this.src='${finalMediaPath}?retry='+this.retryCount;},1000*this.retryCount);}else{this.parentElement.innerHTML='<div class=\\'text-gray-400 text-sm p-4 bg-gray-100 rounded\\'>📷 圖片載入失敗</div>';}" />
                          </div>`;
                      if (!content || content === 'imageMessage') displayContent = '';
                  } else if (['videoMessage', 'video'].includes(type)) {
@@ -1226,7 +1226,7 @@
                          <div class="mt-2">
                              <video controls src="${finalMediaPath}" 
                                     class="rounded-lg max-w-sm max-h-96 shadow-md"
-                                    onerror="this.parentElement.innerHTML='<div class=\\'text-gray-400 text-sm\\'>視頻載入失敗</div>'">
+                                    onerror="if(this.retryCount===undefined){this.retryCount=0;}if(this.retryCount<3){this.retryCount++;setTimeout(()=>{this.src='${finalMediaPath}?retry='+this.retryCount;this.load();},1000*this.retryCount);}else{this.parentElement.innerHTML='<div class=\\'text-gray-400 text-sm p-4 bg-gray-100 rounded\\'>🎥 視頻載入失敗</div>';}">
                              </video>
                          </div>`;
                      if (!content || content === 'videoMessage') displayContent = '';
@@ -1243,7 +1243,7 @@
                     attachmentHtml = `
                         <div class="mt-2 relative group">
                             <img src="${finalMediaPath}" class="w-36 h-36 object-contain rounded-lg" 
-                                 onerror="this.parentElement.innerHTML='<div class=\\'w-36 h-36 flex items-center justify-center bg-gray-100 rounded-lg text-4xl\\'>😊</div>'" />
+                                 onerror="if(this.retryCount===undefined){this.retryCount=0;}if(this.retryCount<3){this.retryCount++;setTimeout(()=>{this.src='${finalMediaPath}?retry='+this.retryCount;},1000*this.retryCount);}else{this.parentElement.innerHTML='<div class=\\'w-36 h-36 flex items-center justify-center bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg\\' title=\\'貼圖載入失敗\\'><div class=\\'text-center\\'><div class=\\'text-4xl mb-1\\'>🎨</div><div class=\\'text-xs text-gray-500\\'>載入失敗</div></div></div>';}" />
                         </div>`;
                     displayContent = '';
                 } else if (type === 'stickerMessage' || content === '[貼圖]') {
@@ -1376,24 +1376,30 @@
                         const isGroup = data.isGroup || (data.chatId && data.chatId.endsWith('@g.us'));
                         const messageType = isGroup ? '群组消息' : '私聊消息';
                         const sender = data.message?.push_name || '未知';
+                        const hasMedia = data.message?.attachment_path || ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(data.message?.message_type);
                         
-                        console.log(`📨 收到${messageType}: 会话=${data.sessionId}, 聊天=${data.chatId}, 发送者=${sender}`);
+                        console.log(`📨 收到${messageType}: 会话=${data.sessionId}, 聊天=${data.chatId}, 发送者=${sender}${hasMedia ? ' 📎媒体' : ''}`);
                         
-                        // If the message is for the currently open chat, refresh it immediately
-                        if (currentChatId === data.chatId && currentSessionId === data.sessionId) {
-                            console.log(`🔄 立即刷新当前聊天: ${data.chatId}`);
-                            refreshMessages(data.chatId);
-                        } else {
-                            // 自动打开收到新消息的聊天（所有消息处理方式相同）
-                            console.log(`🔔 自动打开新消息聊天: ${data.chatId}`);
-                            // 获取联系人名称
-                            const contactName = sender || data.chatId.split('@')[0];
-                            loadChat(data.chatId, contactName);
-                        }
+                        // 🆕 如果消息包含媒体，延迟300ms刷新以确保媒体已保存
+                        const refreshDelay = hasMedia ? 300 : 0;
                         
-                        // Always refresh contacts list to update last message time and bring chat to top
-                        console.log('🔄 刷新联系人列表...');
-                        loadContacts();
+                        setTimeout(() => {
+                            // If the message is for the currently open chat, refresh it immediately
+                            if (currentChatId === data.chatId && currentSessionId === data.sessionId) {
+                                console.log(`🔄 刷新当前聊天: ${data.chatId}${hasMedia ? ' (等待媒体)' : ''}`);
+                                refreshMessages(data.chatId);
+                            } else {
+                                // 自动打开收到新消息的聊天（所有消息处理方式相同）
+                                console.log(`🔔 自动打开新消息聊天: ${data.chatId}`);
+                                // 获取联系人名称
+                                const contactName = sender || data.chatId.split('@')[0];
+                                loadChat(data.chatId, contactName);
+                            }
+                            
+                            // Always refresh contacts list to update last message time and bring chat to top
+                            console.log('🔄 刷新联系人列表...');
+                            loadContacts();
+                        }, refreshDelay);
                     }
                 } catch (e) {
                     console.error('❌ 解析 WebSocket 消息失敗:', e, '原始数据:', event.data);
