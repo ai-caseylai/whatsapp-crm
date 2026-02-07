@@ -151,8 +151,10 @@
             </div>
         </div>
 
-        <!-- Main: Chat -->
-        <div id="chat-area" class="flex-1 flex flex-col bg-[#e5ddd5] relative">
+        <!-- Main: Chat + Gemini Assistant -->
+        <div id="chat-area" class="flex-1 flex bg-[#e5ddd5] relative">
+            <!-- Chat Section -->
+            <div id="chat-section" class="flex-1 flex flex-col transition-all duration-300">
             <!-- Toggle Sidebar Button (Fixed) - 移到右上角 -->
             <button onclick="toggleSidebarWidth()" id="toggle-sidebar-fixed-btn" class="absolute top-4 right-4 z-20 p-2 bg-white hover:bg-gray-100 rounded-lg shadow-lg transition border border-gray-300" title="顯示/隱藏聯絡人欄">
                 <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -252,8 +254,48 @@
                     <div class="grid grid-cols-8 gap-2" id="emoji-grid"></div>
                 </div>
             </div>
+            </div>
+            <!-- End Chat Section -->
+
+            <!-- Gemini AI Assistant Sidebar (Embedded) -->
+            <div id="gemini-sidebar" class="w-96 bg-white border-l border-gray-300 flex flex-col transition-all duration-300">
+                <!-- Header -->
+                <div class="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-3 flex justify-between items-center">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                        <h3 class="font-bold text-sm">Gemini 3 助手</h3>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button onclick="clearLLMChat()" class="hover:bg-white/20 p-1 rounded" title="清空對話">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                        <button onclick="toggleGeminiSidebar()" class="hover:bg-white/20 p-1 rounded" title="隱藏助手">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Chat Container -->
+                <div id="llm-chat-container" class="flex-1 overflow-y-auto p-3 bg-gray-50">
+                    <!-- Messages will be added here -->
+                </div>
+
+                <!-- Input Area -->
+                <div class="p-3 bg-white border-t border-gray-200">
+                    <div class="flex gap-2">
+                        <textarea id="llm-input" rows="2" placeholder="輸入訊息... (Shift+Enter 換行)" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"></textarea>
+                        <button onclick="sendLLMMessage()" class="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-3 rounded-lg hover:from-purple-700 hover:to-blue-700 transition flex items-center gap-1 self-end">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <!-- End Gemini Sidebar -->
+
         </div>
+        <!-- End chat-area -->
     </div>
+    <!-- End view-chat -->
 
     <!-- Calendar View (Hidden by default) -->
     <div id="view-calendar" class="flex-1 flex flex-col hidden bg-white p-6 overflow-y-auto">
@@ -2164,78 +2206,24 @@
         
     </script>
 
-    <!-- LLM Assistant Sidebar -->
-    <div id="llm-sidebar" class="fixed right-0 top-0 h-full bg-white shadow-2xl border-l border-gray-300 flex flex-col transition-transform duration-300 translate-x-full z-50" style="width: 400px;">
-        <!-- Header -->
-        <div class="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 flex justify-between items-center">
-            <div class="flex items-center gap-2">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
-                <h3 class="font-bold text-lg">Gemini 3 助手</h3>
-            </div>
-            <div class="flex items-center gap-2">
-                <!-- Resize buttons -->
-                <button onclick="resizeLLMSidebar('shrink')" class="hover:bg-white/20 p-1 rounded" title="縮小">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
-                </button>
-                <button onclick="resizeLLMSidebar('expand')" class="hover:bg-white/20 p-1 rounded" title="放大">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
-                </button>
-                <button onclick="clearLLMChat()" class="hover:bg-white/20 p-1 rounded" title="清空對話">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                </button>
-            </div>
-        </div>
-
-        <!-- Chat Container -->
-        <div id="llm-chat-container" class="flex-1 overflow-y-auto p-4 bg-gray-50">
-            <!-- Messages will be added here -->
-        </div>
-
-        <!-- Input Area -->
-        <div class="p-4 bg-white border-t border-gray-200">
-            <div class="flex gap-2">
-                <textarea id="llm-input" rows="2" placeholder="輸入訊息... (Shift+Enter 換行)" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"></textarea>
-                <button onclick="sendLLMMessage()" class="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-4 py-2 rounded-lg hover:from-purple-700 hover:to-blue-700 transition flex items-center gap-1 self-end">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
-                    發送
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Toggle Button (Fixed on right edge) -->
-    <button id="llm-toggle-btn" onclick="toggleLLMSidebar()" class="fixed right-0 top-1/2 -translate-y-1/2 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-3 rounded-l-lg shadow-lg hover:from-purple-700 hover:to-blue-700 transition z-40">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
-    </button>
-
     <script>
         // ====== LLM Assistant Sidebar ======
-        let llmSidebarVisible = false;
+        let llmSidebarVisible = true; // Default visible (embedded)
         let llmChatHistory = [];
         let isLLMProcessing = false;
 
-        function toggleLLMSidebar() {
+        function toggleGeminiSidebar() {
             llmSidebarVisible = !llmSidebarVisible;
-            const sidebar = document.getElementById('llm-sidebar');
-            const toggleBtn = document.getElementById('llm-toggle-btn');
+            const sidebar = document.getElementById('gemini-sidebar');
+            const chatSection = document.getElementById('chat-section');
             
             if (llmSidebarVisible) {
-                sidebar.classList.remove('translate-x-full');
-                toggleBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
+                sidebar.style.width = '24rem'; // w-96
+                sidebar.style.minWidth = '24rem';
             } else {
-                sidebar.classList.add('translate-x-full');
-                toggleBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>';
-            }
-        }
-
-        function resizeLLMSidebar(direction) {
-            const sidebar = document.getElementById('llm-sidebar');
-            const currentWidth = parseInt(sidebar.style.width || '400');
-            
-            if (direction === 'expand' && currentWidth < 800) {
-                sidebar.style.width = (currentWidth + 100) + 'px';
-            } else if (direction === 'shrink' && currentWidth > 300) {
-                sidebar.style.width = (currentWidth - 100) + 'px';
+                sidebar.style.width = '0';
+                sidebar.style.minWidth = '0';
+                sidebar.style.overflow = 'hidden';
             }
         }
 
