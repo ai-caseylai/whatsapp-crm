@@ -3888,11 +3888,13 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
             }
         }
         
-        // 5. Enrich contacts with actual last message time (considering LID mappings)
+        // 5. Enrich contacts with actual last message time and merge names (considering LID mappings)
         const enrichedContacts = contacts.map(contact => {
             let actualTime = lastMessageMap.get(contact.jid) || contact.last_message_time;
+            let displayName = contact.custom_name || contact.name;
+            let displayJid = contact.jid;
             
-            // 🔧 Check for LID mapping and merge message times
+            // 🔧 Check for LID mapping and merge message times and names
             if (contact.jid.includes('@s.whatsapp.net')) {
                 // This is a traditional JID, check if it has a mapped LID
                 const mappedLid = traditionalToLid.get(contact.jid);
@@ -3903,6 +3905,11 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
                         if (!actualTime || new Date(lidTime) > new Date(actualTime)) {
                             actualTime = lidTime;
                         }
+                    }
+                    // 🔧 Merge name: prefer traditional JID name if it exists, otherwise use LID name
+                    const lidContact = contacts.find(c => c.jid === mappedLid);
+                    if (lidContact && !displayName && (lidContact.custom_name || lidContact.name)) {
+                        displayName = lidContact.custom_name || lidContact.name;
                     }
                 }
             } else if (contact.jid.includes('@lid')) {
@@ -3916,12 +3923,20 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
                             actualTime = traditionalTime;
                         }
                     }
+                    // 🔧 Merge name: prefer traditional JID name
+                    const traditionalContact = contacts.find(c => c.jid === mappedTraditional);
+                    if (traditionalContact) {
+                        displayName = traditionalContact.custom_name || traditionalContact.name || displayName;
+                        displayJid = traditionalContact.jid; // Use traditional JID for display
+                    }
                 }
             }
             
             return {
                 ...contact,
-                actual_last_message_time: actualTime
+                actual_last_message_time: actualTime,
+                display_name: displayName,
+                display_jid: displayJid
             };
         });
         
@@ -3935,60 +3950,43 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
             return new Date(timeB) - new Date(timeA);
         });
         
-        // 🔧 Deduplicate: Build merged contact map (prefer traditional JID over LID)
-        const contactMap = new Map(); // key = normalized JID (traditional), value = best contact
-        const lidSet = new Set(); // Track which LIDs are already merged
-        
+        // 🔧 Deduplicate: Remove LIDs that have a corresponding traditional JID
+        // Step 1: Collect all traditional JIDs that exist in the list
+        const existingTraditionalJids = new Set();
         for (const contact of enrichedContacts) {
             if (contact.jid.includes('@s.whatsapp.net')) {
-                // Traditional JID - always prefer this
-                const normalizedJid = contact.jid;
-                if (!contactMap.has(normalizedJid)) {
-                    contactMap.set(normalizedJid, contact);
-                    // Mark its LID as merged
-                    const mappedLid = traditionalToLid.get(normalizedJid);
-                    if (mappedLid) {
-                        lidSet.add(mappedLid);
-                    }
-                }
-            } else if (contact.jid.includes('@lid')) {
-                // LID contact - only add if no traditional JID exists
+                existingTraditionalJids.add(contact.jid);
+            }
+        }
+        
+        // Step 2: Build skip set - LIDs whose mapped traditional JID exists
+        const skipJids = new Set();
+        for (const contact of enrichedContacts) {
+            if (contact.jid.includes('@lid')) {
                 const mappedTraditional = lidToTraditional.get(contact.jid);
-                if (mappedTraditional) {
-                    // Has a traditional JID mapping - check if traditional already added
-                    if (!contactMap.has(mappedTraditional)) {
-                        // Traditional not added yet, use LID temporarily (will be replaced if traditional appears later)
-                        contactMap.set(mappedTraditional, contact);
-                    }
-                    lidSet.add(contact.jid);
-                } else {
-                    // No mapping - add LID as standalone if not already added
-                    if (!lidSet.has(contact.jid) && !contactMap.has(contact.jid)) {
-                        contactMap.set(contact.jid, contact);
-                    }
-                }
-            } else {
-                // Group or other type - add directly
-                if (!contactMap.has(contact.jid)) {
-                    contactMap.set(contact.jid, contact);
+                if (mappedTraditional && existingTraditionalJids.has(mappedTraditional)) {
+                    // This LID has a traditional JID in the list - skip the LID
+                    skipJids.add(contact.jid);
                 }
             }
         }
         
-        const deduplicatedContacts = Array.from(contactMap.values());
+        // Step 3: Filter out skipped contacts
+        const deduplicatedContacts = enrichedContacts.filter(c => !skipJids.has(c.jid));
         
         // 6. Process contacts and extract phone numbers
         const csvRows = [];
         csvRows.push('名稱,電話號碼,最後訊息時間'); // CSV Header
         
         for (const contact of deduplicatedContacts) {
-            const displayName = contact.custom_name || contact.name || '';
+            const displayName = contact.display_name || '';
             let phoneNumber = '';
             
-            // Extract phone number from JID
-            if (contact.jid.includes('@lid')) {
+            // Extract phone number from JID (use display_jid if available)
+            const jid = contact.display_jid || contact.jid;
+            if (jid.includes('@lid')) {
                 // LID format - lookup traditional JID
-                const traditionalJid = lidToTraditional.get(contact.jid);
+                const traditionalJid = lidToTraditional.get(jid);
                 if (traditionalJid && traditionalJid.includes('@s.whatsapp.net')) {
                     const phone = traditionalJid.split('@')[0];
                     // Format Hong Kong numbers
@@ -4000,19 +3998,19 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
                 } else {
                     phoneNumber = 'LID 聯絡人';
                 }
-            } else if (contact.jid.includes('@s.whatsapp.net')) {
+            } else if (jid.includes('@s.whatsapp.net')) {
                 // Traditional format
-                const phone = contact.jid.split('@')[0];
+                const phone = jid.split('@')[0];
                 if (phone.startsWith('852') && phone.length === 11) {
                     phoneNumber = `+852 ${phone.slice(3, 7)} ${phone.slice(7)}`;
                 } else {
                     phoneNumber = `+${phone}`;
                 }
-            } else if (contact.jid.includes('@g.us')) {
+            } else if (jid.includes('@g.us')) {
                 // Group
                 phoneNumber = '群組';
             } else {
-                phoneNumber = contact.jid;
+                phoneNumber = jid;
             }
             
             // Use actual message time
