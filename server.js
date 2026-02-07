@@ -2048,10 +2048,14 @@ app.get('/api/session/:id/contacts', async (req, res) => {
             
             if (traditionalContact) {
                 // 使用传统 JID，合并信息
+                // 取两个 JID 中最新的消息时间
+                const traditionalTime = traditionalContact.last_message_time ? new Date(traditionalContact.last_message_time) : new Date(0);
+                const lidTime = contact.last_message_time ? new Date(contact.last_message_time) : new Date(0);
+                const latestMessageTime = traditionalTime > lidTime ? traditionalContact.last_message_time : contact.last_message_time;
+                
                 const merged = {
                     ...traditionalContact,
-                    // 如果传统联系人的 last_message_time 为空，使用 LID 的
-                    last_message_time: traditionalContact.last_message_time || contact.last_message_time,
+                    last_message_time: latestMessageTime,
                     updated_at: new Date(Math.max(
                         new Date(traditionalContact.updated_at || 0),
                         new Date(contact.updated_at || 0)
@@ -2159,11 +2163,37 @@ app.get('/api/session/:id/contacts', async (req, res) => {
             }
         }
         
+        // 🔧 为映射的 JID 合并消息时间
+        // 如果一个传统 JID 有对应的 LID，需要合并两者的消息时间
+        const reverseMappingMap = new Map();
+        (mappings || []).forEach(m => {
+            reverseMappingMap.set(m.traditional_jid, m.lid_jid);
+        });
+        
+        // 为每个联系人获取合并后的最后消息时间
+        data.forEach(contact => {
+            const traditionalJid = contact.jid;
+            const lidJid = reverseMappingMap.get(traditionalJid);
+            
+            // 如果有 LID 映射，合并两个 JID 的消息时间
+            if (lidJid) {
+                const traditionalTime = lastMessageMap.get(traditionalJid);
+                const lidTime = lastMessageMap.get(lidJid);
+                
+                if (traditionalTime && lidTime) {
+                    const latest = new Date(traditionalTime) > new Date(lidTime) ? traditionalTime : lidTime;
+                    lastMessageMap.set(traditionalJid, latest);
+                } else if (lidTime) {
+                    lastMessageMap.set(traditionalJid, lidTime);
+                }
+            }
+        });
+        
         // Add last_message_time to each contact
-        // 🔧 只使用真实的消息时间，不使用 updated_at 作为 fallback
+        // 🔧 优先使用已经合并的 last_message_time（如果存在的话）
         let enrichedData = data.map(contact => ({
             ...contact,
-            last_message_time: lastMessageMap.get(contact.jid) || null
+            last_message_time: contact.last_message_time || lastMessageMap.get(contact.jid) || null
         }));
         
         // 🔧 确保"我"（用户自己）也在联系人列表中，并有正确的 last_message_time
