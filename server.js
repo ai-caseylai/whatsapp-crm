@@ -3733,6 +3733,111 @@ app.post('/api/session/:id/auto-map-lids', async (req, res) => {
     }
 });
 
+// Export Contacts to CSV
+app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
+    const sessionId = req.params.id;
+    
+    try {
+        // 1. Get all contacts with last_message_time
+        const { data: contacts, error: contactError } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid, name, custom_name, last_message_time')
+            .eq('session_id', sessionId)
+            .order('last_message_time', { ascending: false, nullsLast: true });
+        
+        if (contactError) throw contactError;
+        
+        // 2. Get LID mappings
+        const { data: mappings, error: mappingError } = await supabase
+            .from('whatsapp_jid_mapping')
+            .select('lid_jid, traditional_jid')
+            .eq('session_id', sessionId);
+        
+        if (mappingError) throw mappingError;
+        
+        // 3. Create mapping lookup
+        const lidToTraditional = new Map();
+        if (mappings) {
+            for (const m of mappings) {
+                lidToTraditional.set(m.lid_jid, m.traditional_jid);
+            }
+        }
+        
+        // 4. Process contacts and extract phone numbers
+        const csvRows = [];
+        csvRows.push('名稱,電話號碼,最後訊息時間'); // CSV Header
+        
+        for (const contact of contacts || []) {
+            const displayName = contact.custom_name || contact.name || '';
+            let phoneNumber = '';
+            
+            // Extract phone number from JID
+            if (contact.jid.includes('@lid')) {
+                // LID format - lookup traditional JID
+                const traditionalJid = lidToTraditional.get(contact.jid);
+                if (traditionalJid && traditionalJid.includes('@s.whatsapp.net')) {
+                    const phone = traditionalJid.split('@')[0];
+                    // Format Hong Kong numbers
+                    if (phone.startsWith('852') && phone.length === 11) {
+                        phoneNumber = `+852 ${phone.slice(3, 7)} ${phone.slice(7)}`;
+                    } else {
+                        phoneNumber = `+${phone}`;
+                    }
+                } else {
+                    phoneNumber = 'LID 聯絡人';
+                }
+            } else if (contact.jid.includes('@s.whatsapp.net')) {
+                // Traditional format
+                const phone = contact.jid.split('@')[0];
+                if (phone.startsWith('852') && phone.length === 11) {
+                    phoneNumber = `+852 ${phone.slice(3, 7)} ${phone.slice(7)}`;
+                } else {
+                    phoneNumber = `+${phone}`;
+                }
+            } else if (contact.jid.includes('@g.us')) {
+                // Group
+                phoneNumber = '群組';
+            } else {
+                phoneNumber = contact.jid;
+            }
+            
+            const lastMessageTime = contact.last_message_time 
+                ? new Date(contact.last_message_time).toLocaleString('zh-HK', { 
+                    year: 'numeric', 
+                    month: '2-digit', 
+                    day: '2-digit', 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                  })
+                : '無訊息';
+            
+            // Escape CSV fields (handle commas and quotes)
+            const escapeCsvField = (field) => {
+                if (field.includes(',') || field.includes('"') || field.includes('\n')) {
+                    return `"${field.replace(/"/g, '""')}"`;
+                }
+                return field;
+            };
+            
+            csvRows.push(`${escapeCsvField(displayName)},${escapeCsvField(phoneNumber)},${escapeCsvField(lastMessageTime)}`);
+        }
+        
+        // 5. Generate CSV content
+        const csvContent = csvRows.join('\n');
+        const timestamp = new Date().toISOString().split('T')[0];
+        const filename = `聯絡人列表_${timestamp}.csv`;
+        
+        // 6. Send CSV file
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+        res.send('\uFEFF' + csvContent); // Add BOM for UTF-8
+        
+    } catch (err) {
+        console.error('Error exporting contacts CSV:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 server.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);

@@ -53,12 +53,15 @@
                     </svg>
                     聯絡人管理
                 </h2>
-                <p class="text-gray-600 text-sm mb-4">從 WhatsApp 獲取聯絡人名稱</p>
+                <p class="text-gray-600 text-sm mb-4">從 WhatsApp 獲取聯絡人名稱，導出 CSV</p>
                 <button onclick="refreshUnknownContacts()" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg transition mb-2">
-                    從 WhatsApp 獲取
+                    從 WhatsApp 獲取名稱
                 </button>
-                <button onclick="extractNamesFromGroups()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                <button onclick="extractNamesFromGroups()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition mb-2">
                     從群組提取名稱
+                </button>
+                <button onclick="downloadContactsCSV()" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                    📥 下載聯絡人 CSV
                 </button>
             </div>
 
@@ -235,6 +238,21 @@
 
         function openMarketing() {
             window.location.href = '/?marketing=1';
+        }
+
+        async function downloadContactsCSV() {
+            try {
+                showStatus('正在生成 CSV 文件...', 'info');
+                
+                // Open the download URL directly
+                const downloadUrl = `/api/session/${SESSION_ID}/export-contacts-csv`;
+                window.open(downloadUrl, '_blank');
+                
+                showStatus('CSV 下載已開始！', 'success');
+            } catch (err) {
+                console.error('Error downloading CSV:', err);
+                showStatus('下載失敗: ' + err.message, 'error');
+            }
         }
     </script>
 </body>
