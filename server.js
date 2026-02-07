@@ -3108,6 +3108,20 @@ const checkAuthToken = (req, res, next) => {
     next();
 };
 
+// Casey CRM Access Token Middleware
+const checkCaseyCRMToken = (req, res, next) => {
+    const auth = req.headers['authorization'];
+    if (!auth || !auth.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing Bearer token' });
+    }
+    const token = auth.split(' ')[1];
+    const validTokens = [MASTER_KEY, 'casey-crm'];
+    if (!validTokens.includes(token)) {
+        return res.status(403).json({ error: 'Forbidden: Invalid access token' });
+    }
+    next();
+};
+
 // 1. Create Session
 app.post('/api/v1/sessions', checkMasterKey, async (req, res) => {
     // Generate ID or use provided
@@ -3838,10 +3852,501 @@ app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
     }
 });
 
+// ============================================
+// Casey CRM API Endpoints (with Token Auth)
+// ============================================
+
+// 1. Get All Contacts
+app.get('/api/crm/contacts', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.query.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        const { data: contacts, error } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid, name, custom_name, last_message_time')
+            .eq('session_id', sessionId)
+            .order('last_message_time', { ascending: false, nullsLast: true });
+        
+        if (error) throw error;
+        
+        res.json({ success: true, contacts: contacts || [] });
+    } catch (err) {
+        console.error('Error getting contacts:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 2. Export Contacts CSV
+app.get('/api/crm/contacts/export', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.query.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        // Reuse the existing CSV export logic
+        const response = await fetch(`http://localhost:${port}/api/session/${sessionId}/export-contacts-csv`);
+        const csvContent = await response.text();
+        
+        const timestamp = new Date().toISOString().split('T')[0];
+        const filename = `聯絡人列表_${timestamp}.csv`;
+        
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+        res.send(csvContent);
+    } catch (err) {
+        console.error('Error exporting contacts:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3. Refresh Unknown Contacts from WhatsApp
+app.post('/api/crm/contacts/refresh', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(400).json({ error: 'Session not connected' });
+        }
+        
+        // Get all contacts without names
+        const { data: unknownContacts, error } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid')
+            .eq('session_id', sessionId)
+            .is('name', null)
+            .is('custom_name', null);
+        
+        if (error) throw error;
+        
+        let updated = 0;
+        for (const contact of unknownContacts || []) {
+            try {
+                if (contact.jid.includes('@s.whatsapp.net')) {
+                    const [result] = await session.sock.onWhatsApp(contact.jid);
+                    if (result && result.name) {
+                        await supabase
+                            .from('whatsapp_contacts')
+                            .update({ name: result.name })
+                            .eq('session_id', sessionId)
+                            .eq('jid', contact.jid);
+                        updated++;
+                    }
+                }
+            } catch (err) {
+                console.error(`Error refreshing contact ${contact.jid}:`, err);
+            }
+        }
+        
+        res.json({ success: true, updated, total: unknownContacts?.length || 0 });
+    } catch (err) {
+        console.error('Error refreshing contacts:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 4. Extract Names from Group Messages
+app.post('/api/crm/contacts/extract-names', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        const { data: messages, error: msgError } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, push_name')
+            .eq('session_id', sessionId)
+            .not('push_name', 'is', null)
+            .not('remote_jid', 'is', null);
+        
+        if (msgError) throw msgError;
+        
+        const jidToName = new Map();
+        for (const msg of messages || []) {
+            if (msg.remote_jid && msg.push_name) {
+                if (!jidToName.has(msg.remote_jid)) {
+                    jidToName.set(msg.remote_jid, msg.push_name);
+                }
+            }
+        }
+        
+        let updated = 0;
+        for (const [jid, name] of jidToName.entries()) {
+            const { data: existing } = await supabase
+                .from('whatsapp_contacts')
+                .select('name, custom_name')
+                .eq('session_id', sessionId)
+                .eq('jid', jid)
+                .single();
+            
+            if (existing && !existing.custom_name && (!existing.name || existing.name === jid)) {
+                const { error: updateError } = await supabase
+                    .from('whatsapp_contacts')
+                    .update({ name })
+                    .eq('session_id', sessionId)
+                    .eq('jid', jid);
+                
+                if (!updateError) updated++;
+            } else if (!existing) {
+                const { error: insertError } = await supabase
+                    .from('whatsapp_contacts')
+                    .insert({ session_id: sessionId, jid, name });
+                
+                if (!insertError) updated++;
+            }
+        }
+        
+        res.json({ success: true, updated, total: jidToName.size });
+    } catch (err) {
+        console.error('Error extracting names:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 5. Cleanup Empty Contacts
+app.post('/api/crm/contacts/cleanup', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const includeTraditional = req.body.includeTraditional || false;
+    
+    try {
+        let query = supabase
+            .from('whatsapp_contacts')
+            .select('jid')
+            .eq('session_id', sessionId)
+            .is('name', null)
+            .is('custom_name', null);
+        
+        if (!includeTraditional) {
+            query = query.like('jid', '%@lid');
+        }
+        
+        const { data: emptyContacts, error: fetchError } = await query;
+        if (fetchError) throw fetchError;
+        
+        let deleted = 0;
+        const toDelete = [];
+        
+        for (const contact of emptyContacts || []) {
+            const { count } = await supabase
+                .from('whatsapp_messages')
+                .select('*', { count: 'exact', head: true })
+                .eq('session_id', sessionId)
+                .or(`remote_jid.eq.${contact.jid},sender_jid.eq.${contact.jid}`);
+            
+            if (count === 0) {
+                toDelete.push(contact.jid);
+            }
+        }
+        
+        if (toDelete.length > 0) {
+            const { error: deleteError } = await supabase
+                .from('whatsapp_contacts')
+                .delete()
+                .eq('session_id', sessionId)
+                .in('jid', toDelete);
+            
+            if (deleteError) throw deleteError;
+            deleted = toDelete.length;
+        }
+        
+        res.json({ success: true, deleted, checked: emptyContacts?.length || 0 });
+    } catch (err) {
+        console.error('Error cleaning up contacts:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 6. Get Messages
+app.get('/api/crm/messages', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.query.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const chatId = req.query.chatId;
+    const limit = parseInt(req.query.limit) || 50;
+    
+    try {
+        let query = supabase
+            .from('whatsapp_messages')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('message_timestamp', { ascending: false })
+            .limit(limit);
+        
+        if (chatId) {
+            query = query.eq('remote_jid', chatId);
+        }
+        
+        const { data: messages, error } = await query;
+        if (error) throw error;
+        
+        res.json({ success: true, messages: messages || [] });
+    } catch (err) {
+        console.error('Error getting messages:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 7. Send Message
+app.post('/api/crm/messages/send', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const { recipient, text } = req.body;
+    
+    if (!recipient || !text) {
+        return res.status(400).json({ error: 'Missing recipient or text' });
+    }
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(400).json({ error: 'Session not connected' });
+        }
+        
+        await session.sock.sendMessage(recipient, { text });
+        res.json({ success: true, message: 'Message sent' });
+    } catch (err) {
+        console.error('Error sending message:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 8. Broadcast Messages (群发)
+app.post('/api/crm/messages/broadcast', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const { recipients, text } = req.body;
+    
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+        return res.status(400).json({ error: 'Missing or invalid recipients array' });
+    }
+    
+    if (!text) {
+        return res.status(400).json({ error: 'Missing text' });
+    }
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(400).json({ error: 'Session not connected' });
+        }
+        
+        const results = [];
+        for (const recipient of recipients) {
+            try {
+                await session.sock.sendMessage(recipient, { text });
+                results.push({ recipient, success: true });
+            } catch (err) {
+                results.push({ recipient, success: false, error: err.message });
+            }
+        }
+        
+        const successCount = results.filter(r => r.success).length;
+        res.json({ 
+            success: true, 
+            sent: successCount,
+            failed: results.length - successCount,
+            results 
+        });
+    } catch (err) {
+        console.error('Error broadcasting messages:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 9. Download All Media
+app.post('/api/crm/media/download-all', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(400).json({ error: 'Session not connected' });
+        }
+        
+        const { data: messages, error } = await supabase
+            .from('whatsapp_messages')
+            .select('id, remote_jid, message_type, media_url')
+            .eq('session_id', sessionId)
+            .in('message_type', ['image', 'video', 'sticker'])
+            .is('media_path', null)
+            .not('media_url', 'is', null)
+            .limit(100);
+        
+        if (error) throw error;
+        
+        let downloaded = 0;
+        let failed = 0;
+        
+        for (const msg of messages || []) {
+            try {
+                const buffer = await downloadMediaMessage(
+                    { key: { id: msg.id, remoteJid: msg.remote_jid } },
+                    'buffer',
+                    {},
+                    { logger: console, reuploadRequest: session.sock.updateMediaMessage }
+                );
+                
+                if (buffer) {
+                    const ext = msg.message_type === 'video' ? 'mp4' : 
+                               msg.message_type === 'sticker' ? 'webp' : 'jpg';
+                    const filename = `${msg.id}.${ext}`;
+                    const filepath = path.join(__dirname, 'media', filename);
+                    
+                    await fs.promises.mkdir(path.join(__dirname, 'media'), { recursive: true });
+                    await fs.promises.writeFile(filepath, buffer);
+                    
+                    await supabase
+                        .from('whatsapp_messages')
+                        .update({ media_path: filepath })
+                        .eq('id', msg.id);
+                    
+                    downloaded++;
+                }
+            } catch (err) {
+                console.error(`Failed to download media for message ${msg.id}:`, err);
+                failed++;
+            }
+        }
+        
+        res.json({ success: true, downloaded, failed, total: messages?.length || 0 });
+    } catch (err) {
+        console.error('Error downloading media:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 10. Force Sync
+app.post('/api/crm/sync/force', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(400).json({ error: 'Session not connected' });
+        }
+        
+        // Clear existing data
+        await supabase.from('whatsapp_messages').delete().eq('session_id', sessionId);
+        await supabase.from('whatsapp_contacts').delete().eq('session_id', sessionId);
+        
+        // Trigger sync (this will be handled by the existing sync logic)
+        res.json({ success: true, message: 'Sync started. Data cleared, resyncing from WhatsApp.' });
+    } catch (err) {
+        console.error('Error forcing sync:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 11. Get LID Mapping Candidates
+app.get('/api/crm/lid/candidates', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.query.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        const { data, error } = await supabase.rpc('get_lid_mapping_candidates', {
+            p_session_id: sessionId
+        });
+        
+        if (error) throw error;
+        
+        res.json({ success: true, candidates: data || [] });
+    } catch (err) {
+        console.error('Error getting LID candidates:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 12. Add LID Mapping
+app.post('/api/crm/lid/mapping', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const { lidJid, traditionalJid } = req.body;
+    
+    if (!lidJid || !traditionalJid) {
+        return res.status(400).json({ error: 'Missing lidJid or traditionalJid' });
+    }
+    
+    try {
+        const { error } = await supabase
+            .from('whatsapp_jid_mapping')
+            .upsert({
+                session_id: sessionId,
+                lid_jid: lidJid,
+                traditional_jid: traditionalJid
+            }, { onConflict: 'session_id,lid_jid' });
+        
+        if (error) throw error;
+        
+        res.json({ success: true, message: 'LID mapping added' });
+    } catch (err) {
+        console.error('Error adding LID mapping:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 13. Auto Map LIDs
+app.post('/api/crm/lid/auto-map', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        // This reuses the existing auto-map logic
+        const response = await fetch(`http://localhost:${port}/api/session/${sessionId}/auto-map-lids`, {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        res.json(result);
+    } catch (err) {
+        console.error('Error auto-mapping LIDs:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 14. Get Chats/Conversations
+app.get('/api/crm/chats', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.query.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const limit = parseInt(req.query.limit) || 50;
+    
+    try {
+        const { data: contacts, error } = await supabase
+            .from('whatsapp_contacts')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('last_message_time', { ascending: false, nullsLast: true })
+            .limit(limit);
+        
+        if (error) throw error;
+        
+        res.json({ success: true, chats: contacts || [] });
+    } catch (err) {
+        console.error('Error getting chats:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 15. Get Daily Stats
+app.get('/api/crm/stats/daily', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.query.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    
+    try {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        
+        const { count, error } = await supabase
+            .from('whatsapp_messages')
+            .select('*', { count: 'exact', head: true })
+            .eq('session_id', sessionId)
+            .eq('from_me', true)
+            .gte('message_timestamp', todayStart.toISOString());
+        
+        if (error) throw error;
+        
+        res.json({ 
+            success: true, 
+            sent: count || 0,
+            date: todayStart.toISOString().split('T')[0]
+        });
+    } catch (err) {
+        console.error('Error getting daily stats:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 server.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
     console.log(`💓 心跳檢測: 每 ${RECONNECT_CONFIG.heartbeatInterval/1000} 秒`);
     console.log(`🔍 自動檢查: 每 5 分鐘檢查斷開的會話`);
     console.log(`🔌 WebSocket 服務器已啟動`);
+    console.log(`🔑 Casey CRM API: Bearer token 'casey-crm' enabled`);
 });
