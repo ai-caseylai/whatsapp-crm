@@ -3811,14 +3811,15 @@ app.post('/api/session/:id/messages/:messageId/revoke', async (req, res) => {
             });
         }
         
-        // Send revoke message using Baileys (delete format)
-        await session.sock.sendMessage(message.remote_jid, {
-            delete: {
-                remoteJid: message.remote_jid,
-                fromMe: true,
-                id: messageId
-            }
-        });
+        // Send revoke message using Baileys
+        // Create the message key that needs to be revoked
+        const key = {
+            remoteJid: message.remote_jid,
+            fromMe: true,
+            id: messageId
+        };
+        
+        await session.sock.sendMessage(message.remote_jid, { delete: key });
         
         // Also delete from database
         await supabase
@@ -4471,14 +4472,15 @@ app.post('/api/crm/messages/revoke', checkCaseyCRMToken, async (req, res) => {
             });
         }
         
-        // Send revoke message using Baileys (delete format)
-        await session.sock.sendMessage(message.remote_jid, {
-            delete: {
-                remoteJid: message.remote_jid,
-                fromMe: true,
-                id: messageId
-            }
-        });
+        // Send revoke message using Baileys
+        // Create the message key that needs to be revoked
+        const key = {
+            remoteJid: message.remote_jid,
+            fromMe: true,
+            id: messageId
+        };
+        
+        await session.sock.sendMessage(message.remote_jid, { delete: key });
         
         // Delete from database
         await supabase
