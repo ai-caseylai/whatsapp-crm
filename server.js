@@ -3413,6 +3413,215 @@ function broadcastMessage(sessionId, chatId, message) {
 // Make broadcastMessage available globally
 global.broadcastMessage = broadcastMessage;
 
+// ==================== LID Mapping Management APIs ====================
+
+// Get all unmapped LIDs (LIDs with messages from user but no mapping)
+app.get('/api/session/:id/lid-mapping-candidates', async (req, res) => {
+    const sessionId = req.params.id;
+    
+    try {
+        // Query to find LIDs that need mapping
+        const { data: candidates, error } = await supabase.rpc('get_lid_mapping_candidates', {
+            p_session_id: sessionId
+        });
+        
+        if (error) {
+            console.error('Error fetching LID candidates:', error);
+            // Fallback: direct query if RPC doesn't exist
+            const { data: fallbackData, error: fallbackError } = await supabase
+                .from('whatsapp_messages')
+                .select('remote_jid, push_name')
+                .eq('session_id', sessionId)
+                .like('remote_jid', '%@lid')
+                .eq('from_me', true)
+                .limit(100);
+            
+            if (fallbackError) throw fallbackError;
+            
+            // Group by remote_jid and count
+            const grouped = {};
+            for (const msg of fallbackData || []) {
+                if (!grouped[msg.remote_jid]) {
+                    grouped[msg.remote_jid] = {
+                        lid_jid: msg.remote_jid,
+                        push_name: msg.push_name,
+                        my_messages: 0,
+                        total_messages: 0
+                    };
+                }
+                grouped[msg.remote_jid].my_messages++;
+                grouped[msg.remote_jid].total_messages++;
+            }
+            
+            return res.json(Object.values(grouped));
+        }
+        
+        res.json(candidates || []);
+    } catch (err) {
+        console.error('Error in lid-mapping-candidates:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get recent messages for a specific LID (to help identify the contact)
+app.get('/api/session/:id/lid-messages/:lidJid', async (req, res) => {
+    const sessionId = req.params.id;
+    const lidJid = decodeURIComponent(req.params.lidJid);
+    
+    try {
+        const { data, error } = await supabase
+            .from('whatsapp_messages')
+            .select('message_id, from_me, content, message_timestamp, push_name')
+            .eq('session_id', sessionId)
+            .eq('remote_jid', lidJid)
+            .order('message_timestamp', { ascending: false })
+            .limit(10);
+        
+        if (error) throw error;
+        res.json(data || []);
+    } catch (err) {
+        console.error('Error fetching LID messages:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Manually add a LID mapping
+app.post('/api/session/:id/lid-mapping', async (req, res) => {
+    const sessionId = req.params.id;
+    const { lid_jid, traditional_jid } = req.body;
+    
+    if (!lid_jid || !traditional_jid) {
+        return res.status(400).json({ error: 'lid_jid and traditional_jid are required' });
+    }
+    
+    try {
+        const { data, error } = await supabase
+            .from('whatsapp_jid_mapping')
+            .insert({
+                session_id: sessionId,
+                lid_jid: lid_jid,
+                traditional_jid: traditional_jid
+            });
+        
+        if (error) throw error;
+        
+        res.json({ 
+            success: true, 
+            message: `Mapping added: ${lid_jid} -> ${traditional_jid}`,
+            data 
+        });
+    } catch (err) {
+        console.error('Error adding LID mapping:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get all existing LID mappings
+app.get('/api/session/:id/lid-mappings', async (req, res) => {
+    const sessionId = req.params.id;
+    
+    try {
+        const { data, error } = await supabase
+            .from('whatsapp_jid_mapping')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('created_at', { ascending: false });
+        
+        if (error) throw error;
+        res.json(data || []);
+    } catch (err) {
+        console.error('Error fetching LID mappings:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Auto-map LIDs by matching pushName in group messages
+app.post('/api/session/:id/auto-map-lids', async (req, res) => {
+    const sessionId = req.params.id;
+    
+    try {
+        // Find LIDs with pushName
+        const { data: lidsWithPushName, error: lidError } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, push_name')
+            .eq('session_id', sessionId)
+            .like('remote_jid', '%@lid')
+            .eq('from_me', false)
+            .not('push_name', 'is', null);
+        
+        if (lidError) throw lidError;
+        
+        // Get unique pushNames
+        const pushNames = [...new Set((lidsWithPushName || []).map(m => m.push_name).filter(Boolean))];
+        
+        if (pushNames.length === 0) {
+            return res.json({ 
+                success: true, 
+                mapped: 0, 
+                message: 'No LIDs with pushName found' 
+            });
+        }
+        
+        // Find matching traditional JIDs in group messages
+        const { data: groupParticipants, error: groupError } = await supabase
+            .from('whatsapp_messages')
+            .select('push_name, participant_phone')
+            .eq('session_id', sessionId)
+            .like('remote_jid', '%@g.us')
+            .in('push_name', pushNames)
+            .not('participant_phone', 'is', null);
+        
+        if (groupError) throw groupError;
+        
+        // Build mapping
+        const mappings = [];
+        const pushNameToPhone = new Map();
+        
+        for (const gp of groupParticipants || []) {
+            if (gp.push_name && gp.participant_phone) {
+                pushNameToPhone.set(gp.push_name.toLowerCase().trim(), gp.participant_phone);
+            }
+        }
+        
+        for (const lid of lidsWithPushName || []) {
+            if (lid.push_name) {
+                const traditionalJid = pushNameToPhone.get(lid.push_name.toLowerCase().trim());
+                if (traditionalJid && traditionalJid.endsWith('@s.whatsapp.net')) {
+                    mappings.push({
+                        session_id: sessionId,
+                        lid_jid: lid.remote_jid,
+                        traditional_jid: traditionalJid
+                    });
+                }
+            }
+        }
+        
+        if (mappings.length === 0) {
+            return res.json({ 
+                success: true, 
+                mapped: 0, 
+                message: 'No matching traditional JIDs found in group messages' 
+            });
+        }
+        
+        // Insert mappings
+        const { data: inserted, error: insertError } = await supabase
+            .from('whatsapp_jid_mapping')
+            .upsert(mappings, { onConflict: 'session_id,lid_jid' });
+        
+        if (insertError) throw insertError;
+        
+        res.json({ 
+            success: true, 
+            mapped: mappings.length, 
+            mappings: mappings 
+        });
+    } catch (err) {
+        console.error('Error in auto-map-lids:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 server.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
