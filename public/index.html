@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.52</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.53</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -173,6 +173,59 @@
             <div id="welcome-screen" class="flex-1 flex items-center justify-center text-gray-500 flex-col">
                 <svg class="w-24 h-24 mb-4 text-gray-300" fill="currentColor" viewBox="0 0 24 24"><path d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2ZM20 16H6L4 18V4H20V16Z"/></svg>
                 <p class="text-lg">請選擇一個聯絡人查看對話</p>
+            </div>
+            
+            <!-- Message Input Area -->
+            <div id="message-input-area" class="bg-gray-100 border-t border-gray-300 p-3 hidden">
+                <div class="flex items-end gap-2">
+                    <!-- Emoji Button -->
+                    <button onclick="toggleEmojiPicker()" class="p-2 text-gray-600 hover:bg-gray-200 rounded-full transition flex-shrink-0" title="選擇 Emoji">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </button>
+                    
+                    <!-- File Attachment Button -->
+                    <label for="file-input" class="p-2 text-gray-600 hover:bg-gray-200 rounded-full cursor-pointer transition flex-shrink-0" title="附加文件">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path>
+                        </svg>
+                    </label>
+                    <input type="file" id="file-input" class="hidden" onchange="handleFileSelect(event)" />
+                    
+                    <!-- Text Input -->
+                    <div class="flex-1 relative">
+                        <textarea 
+                            id="message-text-input" 
+                            placeholder="輸入訊息..." 
+                            class="w-full px-4 py-2 rounded-lg border border-gray-300 resize-none focus:outline-none focus:border-blue-500 transition"
+                            rows="1"
+                            onkeydown="handleInputKeyDown(event)"
+                            oninput="autoResizeTextarea(this)"
+                        ></textarea>
+                        <!-- Selected File Preview -->
+                        <div id="selected-file-preview" class="hidden absolute bottom-full left-0 mb-2 bg-white border border-gray-300 rounded-lg shadow-lg p-2 flex items-center gap-2">
+                            <span id="file-name" class="text-sm text-gray-700"></span>
+                            <button onclick="clearSelectedFile()" class="text-red-500 hover:text-red-700">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Send Button -->
+                    <button onclick="sendMessage()" class="p-2 bg-green-500 hover:bg-green-600 text-white rounded-full transition flex-shrink-0" title="發送">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <!-- Emoji Picker -->
+                <div id="emoji-picker" class="hidden mt-2 bg-white border border-gray-300 rounded-lg shadow-lg p-3 max-h-48 overflow-y-auto">
+                    <div class="grid grid-cols-8 gap-2" id="emoji-grid"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -942,6 +995,7 @@
                 document.getElementById('chat-header').classList.remove('hidden');
                 const messagesContainer = document.getElementById('messages-container');
                 messagesContainer.classList.remove('hidden');
+                document.getElementById('message-input-area').classList.remove('hidden');
                 
                 // 🔧 先使用传入的名字，稍后从消息中更新
                 let displayName = name;
@@ -1671,6 +1725,138 @@
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalText;
+            }
+        }
+
+        // ==================== 消息发送功能 ====================
+        
+        let selectedFile = null;
+        const commonEmojis = ['😀', '😂', '😊', '😍', '🥰', '😘', '😎', '🤔', '😅', '😭', '😡', '👍', '👎', '🙏', '💪', '🎉', '❤️', '💯', '🔥', '✨', '⭐', '💰', '📱', '📧', '📅', '✅', '❌', '⚠️', '🎯', '🚀', '💡', '🏆'];
+        
+        function autoResizeTextarea(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+        }
+        
+        function handleInputKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+        
+        function toggleEmojiPicker() {
+            const picker = document.getElementById('emoji-picker');
+            const grid = document.getElementById('emoji-grid');
+            
+            if (picker.classList.contains('hidden')) {
+                // 初始化 emoji 网格
+                if (!grid.innerHTML) {
+                    grid.innerHTML = commonEmojis.map(emoji => 
+                        `<button onclick="insertEmoji('${emoji}')" class="text-2xl hover:bg-gray-100 rounded p-1 transition">${emoji}</button>`
+                    ).join('');
+                }
+                picker.classList.remove('hidden');
+            } else {
+                picker.classList.add('hidden');
+            }
+        }
+        
+        function insertEmoji(emoji) {
+            const input = document.getElementById('message-text-input');
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            const text = input.value;
+            input.value = text.substring(0, start) + emoji + text.substring(end);
+            input.focus();
+            input.selectionStart = input.selectionEnd = start + emoji.length;
+        }
+        
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            selectedFile = file;
+            document.getElementById('file-name').textContent = file.name;
+            document.getElementById('selected-file-preview').classList.remove('hidden');
+        }
+        
+        function clearSelectedFile() {
+            selectedFile = null;
+            document.getElementById('file-input').value = '';
+            document.getElementById('selected-file-preview').classList.add('hidden');
+        }
+        
+        async function sendMessage() {
+            const textInput = document.getElementById('message-text-input');
+            const text = textInput.value.trim();
+            
+            if (!text && !selectedFile) {
+                alert('請輸入訊息內容或選擇文件');
+                return;
+            }
+            
+            if (!currentChatId) {
+                alert('請先選擇聯絡人');
+                return;
+            }
+            
+            try {
+                // 禁用发送按钮
+                const sendBtn = event.target;
+                sendBtn.disabled = true;
+                
+                if (selectedFile) {
+                    // 发送文件
+                    const formData = new FormData();
+                    formData.append('recipients', JSON.stringify([currentChatId]));
+                    formData.append('text', text || '');
+                    formData.append('attachment', selectedFile);
+                    
+                    const response = await fetch(`/api/session/${currentSessionId}/broadcast`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.error) {
+                        throw new Error(result.error);
+                    }
+                } else {
+                    // 只发送文本
+                    const formData = new FormData();
+                    formData.append('recipients', JSON.stringify([currentChatId]));
+                    formData.append('text', text);
+                    
+                    const response = await fetch(`/api/session/${currentSessionId}/broadcast`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.error) {
+                        throw new Error(result.error);
+                    }
+                }
+                
+                // 清空输入框
+                textInput.value = '';
+                textInput.style.height = 'auto';
+                clearSelectedFile();
+                
+                // 刷新消息列表
+                setTimeout(() => {
+                    refreshMessages(currentChatId);
+                }, 500);
+                
+            } catch (error) {
+                console.error('發送消息失敗:', error);
+                alert('發送失敗: ' + error.message);
+            } finally {
+                const sendBtn = event.target;
+                if (sendBtn) sendBtn.disabled = false;
             }
         }
 
