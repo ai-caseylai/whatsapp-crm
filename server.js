@@ -3838,6 +3838,104 @@ app.post('/api/session/:id/messages/:messageId/revoke', async (req, res) => {
     }
 });
 
+// 🐛 Debug endpoint: Check enriched contact data
+app.get('/api/session/:id/debug-contact/:jidFragment', async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const jidFragment = req.params.jidFragment;
+        const session = activeSessionsManager.getSession(sessionId);
+        
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        // 1. Fetch all contacts
+        const { data: contacts, error: contactsError } = await supabase
+            .from('whatsapp_contacts')
+            .select('*')
+            .eq('session_id', sessionId)
+            .order('last_message_time', { ascending: false, nullsFirst: false });
+        
+        if (contactsError) {
+            throw new Error('Failed to fetch contacts: ' + contactsError.message);
+        }
+        
+        // 2. Fetch LID mappings
+        const { data: mappings, error: mappingsError } = await supabase
+            .from('whatsapp_jid_mapping')
+            .select('lid_jid, traditional_jid')
+            .eq('session_id', sessionId);
+        
+        if (mappingsError) {
+            throw new Error('Failed to fetch mappings: ' + mappingsError.message);
+        }
+        
+        // 3. Build mapping objects
+        const lidToTraditional = new Map();
+        const traditionalToLid = new Map();
+        mappings.forEach(m => {
+            lidToTraditional.set(m.lid_jid, m.traditional_jid);
+            traditionalToLid.set(m.traditional_jid, m.lid_jid);
+        });
+        
+        // 4. Filter contacts that match the JID fragment
+        const matchingContacts = contacts.filter(c => c.jid.includes(jidFragment));
+        
+        // 5. For each matching contact, show enrichment logic
+        const debugInfo = matchingContacts.map(contact => {
+            let displayName = contact.custom_name || contact.name;
+            let displayJid = contact.jid;
+            const info = {
+                jid: contact.jid,
+                original_name: contact.name,
+                custom_name: contact.custom_name,
+                initial_displayName: displayName,
+                initial_displayJid: displayJid,
+                mapping_info: {}
+            };
+            
+            if (contact.jid.includes('@s.whatsapp.net')) {
+                const mappedLid = traditionalToLid.get(contact.jid);
+                if (mappedLid) {
+                    const lidContact = contacts.find(c => c.jid === mappedLid);
+                    info.mapping_info.mapped_lid = mappedLid;
+                    info.mapping_info.lid_contact_name = lidContact ? lidContact.name : null;
+                    info.mapping_info.lid_contact_custom_name = lidContact ? lidContact.custom_name : null;
+                    
+                    if (lidContact && !displayName && (lidContact.custom_name || lidContact.name)) {
+                        displayName = lidContact.custom_name || lidContact.name;
+                        info.mapping_info.displayName_updated_from_lid = true;
+                    }
+                }
+            } else if (contact.jid.includes('@lid')) {
+                const mappedTraditional = lidToTraditional.get(contact.jid);
+                if (mappedTraditional) {
+                    const traditionalContact = contacts.find(c => c.jid === mappedTraditional);
+                    info.mapping_info.mapped_traditional = mappedTraditional;
+                    info.mapping_info.traditional_contact_name = traditionalContact ? traditionalContact.name : null;
+                    info.mapping_info.traditional_contact_custom_name = traditionalContact ? traditionalContact.custom_name : null;
+                    
+                    if (traditionalContact) {
+                        displayName = traditionalContact.custom_name || traditionalContact.name || displayName;
+                        displayJid = traditionalContact.jid;
+                        info.mapping_info.displayName_updated_from_traditional = true;
+                    }
+                }
+            }
+            
+            info.final_displayName = displayName;
+            info.final_displayJid = displayJid;
+            
+            return info;
+        });
+        
+        res.json({ success: true, matches: debugInfo });
+    } catch (error) {
+        console.error('Debug contact error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Export Contacts to CSV
 app.get('/api/session/:id/export-contacts-csv', async (req, res) => {
     const sessionId = req.params.id;
