@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.54</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.55</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -1503,11 +1503,8 @@
                                 console.log(`🔄 刷新当前聊天: ${data.chatId}${hasMedia ? ' (等待媒体)' : ''}`);
                                 refreshMessages(data.chatId);
                             } else {
-                                // 自动打开收到新消息的聊天（所有消息处理方式相同）
-                                console.log(`🔔 自动打开新消息聊天: ${data.chatId}`);
-                                // 获取联系人名称
-                                const contactName = sender || data.chatId.split('@')[0];
-                                loadChat(data.chatId, contactName);
+                                // 不自动打开新消息，只记录日志
+                                console.log(`📨 收到新消息: ${data.chatId}, 发送者: ${sender || '未知'}`);
                             }
                             
                             // Always refresh contacts list to update last message time and bring chat to top
@@ -1801,21 +1798,44 @@
                 return;
             }
             
-            // 禁用输入框和按钮
-            textInput.disabled = true;
-            const emojiBtn = document.querySelector('[onclick="toggleEmojiPicker()"]');
-            const fileBtn = document.querySelector('label[for="file-input"]');
-            const sendBtns = document.querySelectorAll('[onclick="sendMessage()"]');
+            // 保存消息内容和文件
+            const messageToSend = text;
+            const fileToSend = selectedFile;
+            const fileName = selectedFile ? selectedFile.name : null;
             
-            sendBtns.forEach(btn => btn.disabled = true);
+            // 🚀 立即在 UI 中显示消息（乐观更新）
+            const messagesContainer = document.getElementById('messages-container');
+            const tempMessageId = 'temp_' + Date.now();
+            const timestamp = new Date().toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit' });
             
-            try {
-                if (selectedFile) {
-                    // 发送文件
+            const messageHTML = `
+                <div class="flex justify-end" id="${tempMessageId}">
+                    <div class="chat-message message-out rounded-lg px-3 py-2 shadow-sm">
+                        ${fileToSend ? `<p class="text-xs text-gray-600 mb-1">📎 ${fileName}</p>` : ''}
+                        ${messageToSend ? `<p class="text-sm whitespace-pre-wrap break-words">${escapeHtml(messageToSend)}</p>` : ''}
+                        <p class="text-xs text-gray-500 text-right mt-1">${timestamp} <span class="opacity-50">⏳</span></p>
+                    </div>
+                </div>
+            `;
+            
+            messagesContainer.insertAdjacentHTML('beforeend', messageHTML);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            // 立即清空输入框，让用户可以继续输入
+            textInput.value = '';
+            textInput.style.height = 'auto';
+            clearSelectedFile();
+            textInput.focus();
+            
+            // 🔄 异步发送到后台（不阻塞 UI）
+            (async () => {
+                try {
                     const formData = new FormData();
                     formData.append('recipients', JSON.stringify([currentChatId]));
-                    formData.append('text', text || '');
-                    formData.append('attachment', selectedFile);
+                    formData.append('text', messageToSend || '');
+                    if (fileToSend) {
+                        formData.append('attachment', fileToSend);
+                    }
                     
                     const response = await fetch(`/api/session/${currentSessionId}/broadcast`, {
                         method: 'POST',
@@ -1827,43 +1847,42 @@
                     if (result.error) {
                         throw new Error(result.error);
                     }
-                } else {
-                    // 只发送文本
-                    const formData = new FormData();
-                    formData.append('recipients', JSON.stringify([currentChatId]));
-                    formData.append('text', text);
                     
-                    const response = await fetch(`/api/session/${currentSessionId}/broadcast`, {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.error) {
-                        throw new Error(result.error);
+                    // 成功：更新临时消息的状态为已发送
+                    const tempMsg = document.getElementById(tempMessageId);
+                    if (tempMsg) {
+                        const statusSpan = tempMsg.querySelector('.opacity-50');
+                        if (statusSpan) statusSpan.innerHTML = '✓';
                     }
+                    
+                    // 1秒后刷新消息列表（从服务器获取完整消息）
+                    setTimeout(() => {
+                        refreshMessages(currentChatId);
+                    }, 1000);
+                    
+                } catch (error) {
+                    console.error('發送消息失敗:', error);
+                    
+                    // 失败：更新临时消息的状态为失败
+                    const tempMsg = document.getElementById(tempMessageId);
+                    if (tempMsg) {
+                        const statusSpan = tempMsg.querySelector('.opacity-50');
+                        if (statusSpan) {
+                            statusSpan.innerHTML = '✗';
+                            statusSpan.classList.add('text-red-500');
+                        }
+                    }
+                    
+                    alert('發送失敗: ' + error.message);
                 }
-                
-                // 清空输入框
-                textInput.value = '';
-                textInput.style.height = 'auto';
-                clearSelectedFile();
-                
-                // 刷新消息列表
-                setTimeout(() => {
-                    refreshMessages(currentChatId);
-                }, 500);
-                
-            } catch (error) {
-                console.error('發送消息失敗:', error);
-                alert('發送失敗: ' + error.message);
-            } finally {
-                // 恢复输入框和按钮
-                textInput.disabled = false;
-                textInput.focus();
-                sendBtns.forEach(btn => btn.disabled = false);
-            }
+            })();
+        }
+        
+        // HTML 转义函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
     </script>
