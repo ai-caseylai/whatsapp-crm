@@ -165,6 +165,12 @@
                 </div>
                 <!-- Toggle Sidebar Buttons - 最右邊 -->
                 <div class="flex items-center gap-2">
+                    <!-- 分析當前聊天 -->
+                    <button onclick="analyzeCurrentChat()" id="analyze-chat-btn" class="p-2 bg-green-500 hover:bg-green-600 text-white rounded-lg shadow-md transition" title="AI 分析當前聊天">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                    </button>
                     <!-- 控制聯絡人側邊欄 -->
                     <button onclick="toggleSidebarWidth()" id="toggle-sidebar-fixed-btn" class="p-2 bg-white hover:bg-gray-100 rounded-lg shadow-md transition border border-gray-300" title="顯示/隱藏聯絡人欄">
                         <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2310,6 +2316,93 @@
             container.scrollTop = container.scrollHeight;
             
             return messageId;
+        }
+
+        // ====== Chat Analysis Functions ======
+        async function analyzeCurrentChat() {
+            if (!currentChatId) {
+                alert('請先選擇一個聊天');
+                return;
+            }
+
+            const analyzeBtn = document.getElementById('analyze-chat-btn');
+            const originalHTML = analyzeBtn.innerHTML;
+            
+            try {
+                // Show loading
+                analyzeBtn.disabled = true;
+                analyzeBtn.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+                
+                // Get messages from current chat
+                const messagesContainer = document.getElementById('messages-container');
+                const messageElements = messagesContainer.querySelectorAll('.chat-message');
+                
+                if (messageElements.length === 0) {
+                    alert('當前聊天沒有訊息');
+                    return;
+                }
+                
+                // Extract messages
+                const messages = Array.from(messageElements).map(el => {
+                    const isOutgoing = el.classList.contains('message-out');
+                    const text = el.querySelector('.text-sm')?.textContent || '';
+                    return {
+                        sender: isOutgoing ? '你' : '對方',
+                        message: text,
+                        timestamp: new Date().toISOString() // Simplified
+                    };
+                });
+                
+                // Call analysis API
+                const response = await fetch('/api/llm/analyze-chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contactName: document.getElementById('current-contact-name')?.textContent || '未知',
+                        contactId: currentChatId,
+                        messages: messages
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Show analysis in Gemini sidebar
+                    if (!llmSidebarVisible) {
+                        toggleGeminiSidebar();
+                    }
+                    
+                    // Display analysis result
+                    addLLMMessageToUI('assistant', `📊 聊天分析報告\n\n${result.analysis}`);
+                    
+                    // Show success notification
+                    showNotification('分析完成！', 'success');
+                } else {
+                    throw new Error(result.error || '分析失敗');
+                }
+                
+            } catch (error) {
+                console.error('Analysis error:', error);
+                alert('分析失敗: ' + error.message);
+            } finally {
+                analyzeBtn.disabled = false;
+                analyzeBtn.innerHTML = originalHTML;
+            }
+        }
+        
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `fixed top-20 right-4 z-50 px-4 py-3 rounded-lg shadow-lg transition-all duration-300 ${
+                type === 'success' ? 'bg-green-500' : 
+                type === 'error' ? 'bg-red-500' : 'bg-blue-500'
+            } text-white`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
         }
 
         function clearLLMChat() {

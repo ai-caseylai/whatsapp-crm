@@ -4856,6 +4856,89 @@ app.post('/api/llm/chat', async (req, res) => {
     }
 });
 
+// ====== Chat Analysis API ======
+app.post('/api/llm/analyze-chat', async (req, res) => {
+    try {
+        const { contactName, contactId, messages } = req.body;
+        
+        if (!messages || messages.length === 0) {
+            return res.status(400).json({ success: false, error: '沒有訊息可分析' });
+        }
+
+        // Prepare conversation summary for analysis
+        const conversation = messages.map(m => `${m.sender}: ${m.message}`).join('\n');
+        
+        // Analysis prompt
+        const analysisPrompt = `請分析以下 WhatsApp 對話記錄，並提供詳細的分析報告。
+
+對話對象: ${contactName}
+訊息數量: ${messages.length}
+
+對話內容:
+${conversation}
+
+請提供以下分析:
+
+1. 📋 對話摘要 (3-5句話概括)
+2. 😊 整體情緒 (積極/中立/消極，並給出百分比)
+3. 🏷️ 建議標籤 (3-5個關鍵標籤，如：VIP客戶、緊急、需跟進等)
+4. 📞 關鍵資訊 (電話、郵箱、日期、金額等)
+5. 💡 行動建議 (具體的跟進建議)
+6. ⚠️ 重要提醒 (需要特別注意的事項)
+
+請用繁體中文回答，格式清晰易讀。`;
+
+        // Call Open Router API
+        const response = await fetch(OPENROUTER_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'WhatsApp CRM - Chat Analysis'
+            },
+            body: JSON.stringify({
+                model: 'google/gemini-2.0-flash-exp:free',
+                messages: [
+                    { role: 'user', content: analysisPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 2048
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Analysis API Error:', errorText);
+            throw new Error(`分析 API 返回錯誤: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const analysis = data.choices?.[0]?.message?.content || '無法生成分析報告';
+        
+        // Save analysis to database (optional)
+        // You can add database storage here
+        
+        res.json({
+            success: true,
+            analysis,
+            metadata: {
+                contactName,
+                contactId,
+                messageCount: messages.length,
+                analyzedAt: new Date().toISOString()
+            }
+        });
+
+    } catch (error) {
+        console.error('Chat Analysis Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || '分析失敗'
+        });
+    }
+});
+
 server.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
