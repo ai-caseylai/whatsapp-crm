@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.67</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.68</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -152,6 +152,13 @@
 
         <!-- Main: Chat -->
         <div id="chat-area" class="flex-1 flex flex-col bg-[#e5ddd5] relative">
+            <!-- Toggle Sidebar Button (Fixed) -->
+            <button onclick="toggleSidebarWidth()" id="toggle-sidebar-fixed-btn" class="absolute top-4 left-4 z-20 p-2 bg-white hover:bg-gray-100 rounded-lg shadow-lg transition border border-gray-300" title="顯示/隱藏聯絡人欄">
+                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                </svg>
+            </button>
+            
             <!-- Chat Header -->
             <div id="chat-header" class="p-3 bg-gray-200 border-b border-gray-300 hidden flex items-center shadow-sm">
                 <div class="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center text-white font-bold mr-3" id="header-avatar">?</div>
@@ -1920,36 +1927,43 @@
         // Resizable Sidebar功能
         // ============================================
         
-        // Toggle sidebar width between collapsed and expanded
+        // Toggle sidebar visibility - completely hide/show
         function toggleSidebarWidth() {
             const sidebar = document.getElementById('contacts-sidebar');
+            const resizeHandle = document.getElementById('resize-handle');
             const icon = document.getElementById('toggle-icon');
+            const btn = document.getElementById('toggle-sidebar-btn');
             
-            if (!sidebar || !icon) return;
+            if (!sidebar || !icon || !btn) return;
             
-            const currentWidth = sidebar.offsetWidth;
-            const collapsedWidth = 280; // 折叠宽度
-            const expandedWidth = 450;  // 展开宽度
+            // Check if currently hidden
+            const isHidden = sidebar.style.display === 'none';
             
-            // Check if currently collapsed (within 20px tolerance)
-            const isCollapsed = Math.abs(currentWidth - collapsedWidth) < 20;
-            
-            // Toggle width
-            const newWidth = isCollapsed ? expandedWidth : collapsedWidth;
-            sidebar.style.width = newWidth + 'px';
-            
-            // Update icon
-            if (isCollapsed) {
-                // Show collapse icon (arrows pointing left)
+            if (isHidden) {
+                // Show sidebar
+                sidebar.style.display = 'flex';
+                if (resizeHandle) resizeHandle.style.display = 'block';
+                
+                // Restore saved width or use default
+                const savedWidth = localStorage.getItem('sidebarWidth') || '320';
+                sidebar.style.width = savedWidth + 'px';
+                
+                // Update icon to collapse (arrows pointing left)
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>';
+                btn.title = '隱藏聯絡人欄';
+                
+                localStorage.setItem('sidebarHidden', 'false');
             } else {
-                // Show expand icon (arrows pointing right)
+                // Hide sidebar completely
+                sidebar.style.display = 'none';
+                if (resizeHandle) resizeHandle.style.display = 'none';
+                
+                // Update icon to expand (arrows pointing right)
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>';
+                btn.title = '顯示聯絡人欄';
+                
+                localStorage.setItem('sidebarHidden', 'true');
             }
-            
-            // Save to localStorage
-            localStorage.setItem('sidebarWidth', newWidth);
-            localStorage.setItem('sidebarCollapsed', !isCollapsed);
         }
         
         (function initResizableSidebar() {
@@ -1957,6 +1971,7 @@
             const sidebar = document.getElementById('contacts-sidebar');
             const chatArea = document.getElementById('chat-area');
             const icon = document.getElementById('toggle-icon');
+            const btn = document.getElementById('toggle-sidebar-btn');
             
             if (!resizeHandle || !sidebar || !chatArea) return;
             
@@ -1964,19 +1979,26 @@
             let startX = 0;
             let startWidth = 0;
             
-            // Load saved width and state from localStorage
+            // Load saved state from localStorage
             const savedWidth = localStorage.getItem('sidebarWidth');
-            const savedCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            const savedHidden = localStorage.getItem('sidebarHidden') === 'true';
             
-            if (savedWidth) {
-                sidebar.style.width = savedWidth + 'px';
-            }
-            
-            // Set initial icon based on saved state
-            if (savedCollapsed) {
+            // Apply saved state
+            if (savedHidden) {
+                // Hide sidebar
+                sidebar.style.display = 'none';
+                resizeHandle.style.display = 'none';
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>';
+                btn.title = '顯示聯絡人欄';
             } else {
+                // Show sidebar with saved width
+                if (savedWidth) {
+                    sidebar.style.width = savedWidth + 'px';
+                }
+                sidebar.style.display = 'flex';
+                resizeHandle.style.display = 'block';
                 icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>';
+                btn.title = '隱藏聯絡人欄';
             }
             
             resizeHandle.addEventListener('mousedown', (e) => {
@@ -2012,17 +2034,6 @@
                     // Save to localStorage
                     const currentWidth = sidebar.offsetWidth;
                     localStorage.setItem('sidebarWidth', currentWidth);
-                    
-                    // Update toggle button icon based on current width
-                    const collapsedWidth = 280;
-                    const isCollapsed = currentWidth < 350; // Threshold
-                    localStorage.setItem('sidebarCollapsed', isCollapsed);
-                    
-                    if (isCollapsed) {
-                        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>';
-                    } else {
-                        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>';
-                    }
                 }
             });
         })();
