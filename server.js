@@ -4408,7 +4408,100 @@ app.get('/api/crm/chats', checkCaseyCRMToken, async (req, res) => {
     }
 });
 
-// 15. Get Daily Stats
+// 15. Delete Message
+app.post('/api/crm/messages/delete', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const { messageId } = req.body;
+    
+    if (!messageId) {
+        return res.status(400).json({ error: 'Missing messageId' });
+    }
+    
+    try {
+        const { error } = await supabase
+            .from('whatsapp_messages')
+            .delete()
+            .eq('session_id', sessionId)
+            .eq('message_id', messageId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true, message: '消息已删除' });
+    } catch (err) {
+        console.error('Error deleting message:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 16. Revoke Message (撤回对所有人)
+app.post('/api/crm/messages/revoke', checkCaseyCRMToken, async (req, res) => {
+    const sessionId = req.body.sessionId || 'sess_9ai6rbwfe_1770361159106';
+    const { messageId } = req.body;
+    
+    if (!messageId) {
+        return res.status(400).json({ error: 'Missing messageId' });
+    }
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(400).json({ error: 'Session not active' });
+        }
+        
+        // Get message details
+        const { data: message, error: msgError } = await supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, from_me, message_timestamp')
+            .eq('session_id', sessionId)
+            .eq('message_id', messageId)
+            .single();
+        
+        if (msgError || !message) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+        
+        if (!message.from_me) {
+            return res.status(403).json({ error: 'Can only revoke messages sent by you' });
+        }
+        
+        // Check time limit (48 hours)
+        const messageTime = new Date(message.message_timestamp);
+        const hoursSinceMessage = (Date.now() - messageTime.getTime()) / (1000 * 60 * 60);
+        
+        if (hoursSinceMessage > 48) {
+            return res.status(400).json({ 
+                error: '消息发送时间超过48小时，无法撤回',
+                hoursSinceMessage: Math.floor(hoursSinceMessage)
+            });
+        }
+        
+        // Send revoke protocol message
+        await session.sock.sendMessage(message.remote_jid, {
+            protocolMessage: {
+                key: {
+                    remoteJid: message.remote_jid,
+                    fromMe: true,
+                    id: messageId
+                },
+                type: 0  // REVOKE
+            }
+        });
+        
+        // Delete from database
+        await supabase
+            .from('whatsapp_messages')
+            .delete()
+            .eq('session_id', sessionId)
+            .eq('message_id', messageId);
+        
+        res.json({ success: true, message: '消息已撤回' });
+    } catch (err) {
+        console.error('Error revoking message:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 17. Get Daily Stats
 app.get('/api/crm/stats/daily', checkCaseyCRMToken, async (req, res) => {
     const sessionId = req.query.sessionId || 'sess_9ai6rbwfe_1770361159106';
     
