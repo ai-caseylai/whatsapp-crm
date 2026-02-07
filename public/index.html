@@ -155,19 +155,28 @@
         <div id="chat-area" class="flex-1 flex bg-[#e5ddd5] relative">
             <!-- Chat Section -->
             <div id="chat-section" class="flex-1 flex flex-col transition-all duration-300">
-            <!-- Toggle Sidebar Button (Fixed) - 移到右上角 -->
-            <button onclick="toggleSidebarWidth()" id="toggle-sidebar-fixed-btn" class="absolute top-4 right-4 z-20 p-2 bg-white hover:bg-gray-100 rounded-lg shadow-lg transition border border-gray-300" title="顯示/隱藏聯絡人欄">
-                <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
-                </svg>
-            </button>
             
             <!-- Chat Header -->
-            <div id="chat-header" class="p-3 pr-16 bg-gray-200 border-b border-gray-300 hidden flex items-center shadow-sm relative">
+            <div id="chat-header" class="p-3 bg-gray-200 border-b border-gray-300 hidden flex items-center shadow-sm relative">
                 <div class="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center text-white font-bold mr-3" id="header-avatar">?</div>
                 <div class="flex-1">
                     <h2 id="current-contact-name" class="font-bold text-gray-800"></h2>
                     <p id="current-contact-id" class="text-xs text-gray-600 font-mono"></p>
+                </div>
+                <!-- Toggle Sidebar Buttons - 最右邊 -->
+                <div class="flex items-center gap-2">
+                    <!-- 控制聯絡人側邊欄 -->
+                    <button onclick="toggleSidebarWidth()" id="toggle-sidebar-fixed-btn" class="p-2 bg-white hover:bg-gray-100 rounded-lg shadow-md transition border border-gray-300" title="顯示/隱藏聯絡人欄">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                    <!-- 控制 Gemini 側邊欄 -->
+                    <button onclick="toggleGeminiSidebar()" id="toggle-gemini-btn" class="p-2 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white rounded-lg shadow-md transition border border-purple-300" title="顯示/隱藏 Gemini 3 助手">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
                 </div>
             </div>
 
@@ -2215,15 +2224,20 @@
         function toggleGeminiSidebar() {
             llmSidebarVisible = !llmSidebarVisible;
             const sidebar = document.getElementById('gemini-sidebar');
-            const chatSection = document.getElementById('chat-section');
+            const toggleBtn = document.getElementById('toggle-gemini-btn');
             
             if (llmSidebarVisible) {
                 sidebar.style.width = '24rem'; // w-96
                 sidebar.style.minWidth = '24rem';
+                sidebar.style.overflow = 'visible';
+                // 更新按鈕樣式 - 顯示狀態（紫藍色）
+                toggleBtn.className = 'p-2 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white rounded-lg shadow-md transition border border-purple-300';
             } else {
                 sidebar.style.width = '0';
                 sidebar.style.minWidth = '0';
                 sidebar.style.overflow = 'hidden';
+                // 更新按鈕樣式 - 隱藏狀態（灰色）
+                toggleBtn.className = 'p-2 bg-gray-300 hover:bg-gray-400 text-gray-600 rounded-lg shadow-md transition border border-gray-400';
             }
         }
 
