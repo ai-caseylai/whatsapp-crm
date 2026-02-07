@@ -1507,9 +1507,9 @@
                                 console.log(`📨 收到新消息: ${data.chatId}, 发送者: ${sender || '未知'}`);
                             }
                             
-                            // Always refresh contacts list to update last message time and bring chat to top
-                            console.log('🔄 刷新联系人列表...');
-                            loadContacts();
+                            // 🔕 不自动刷新联系人列表，避免界面跳动
+                            // 用户可以手动点击"刷新聯絡人"按钮来更新列表
+                            console.log('ℹ️ 新消息已到达，您可以手动刷新联系人列表');
                         }, refreshDelay);
                     }
                 } catch (e) {
