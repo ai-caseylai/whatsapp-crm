@@ -240,6 +240,15 @@ async function ragQueryWithDB(question, sessionId = null) {
     try {
         console.log(`🔍 RAG 數據庫查詢: ${question}`);
         
+        // 檢測特定查詢類型
+        const isSailingQuery = /帆船|sailing/i.test(question);
+        const isGroupQuery = /群組|群|group/i.test(question);
+        
+        // 如果是關於帆船的群組查詢，直接查詢數據庫
+        if (isSailingQuery && isGroupQuery) {
+            return await queryGroupsByKeyword(question, ['帆船', 'sailing'], sessionId);
+        }
+        
         // 步驟 1: 生成查詢的 embedding
         const queryEmbedding = await jinaGenerateEmbedding(question);
         
@@ -328,6 +337,112 @@ ${context}
         
     } catch (error) {
         console.error('RAG 數據庫查詢失敗:', error);
+        throw error;
+    }
+}
+
+// 查詢包含特定關鍵詞的群組統計
+async function queryGroupsByKeyword(question, keywords, sessionId = null) {
+    try {
+        console.log(`📊 直接查詢群組關鍵詞: ${keywords.join(', ')}`);
+        
+        // 構建查詢條件
+        const orConditions = keywords.map(kw => `content.ilike.%${kw}%`).join(',');
+        
+        let query = supabase
+            .from('whatsapp_messages')
+            .select('remote_jid, content, message_timestamp')
+            .or(orConditions)
+            .like('remote_jid', '%@g.us'); // 只要群組
+        
+        if (sessionId) {
+            query = query.eq('session_id', sessionId);
+        }
+        
+        const { data: messages, error } = await query.limit(1000);
+        
+        if (error) {
+            throw error;
+        }
+        
+        if (!messages || messages.length === 0) {
+            return {
+                answer: `沒有找到包含 "${keywords.join(' 或 ')}" 的群組消息。`,
+                sources: [],
+                method: 'direct_query'
+            };
+        }
+        
+        // 統計每個群組的消息數
+        const groupStats = {};
+        for (const msg of messages) {
+            const groupId = msg.remote_jid;
+            if (!groupStats[groupId]) {
+                groupStats[groupId] = {
+                    count: 0,
+                    samples: []
+                };
+            }
+            groupStats[groupId].count++;
+            if (groupStats[groupId].samples.length < 3) {
+                groupStats[groupId].samples.push(msg.content?.substring(0, 100));
+            }
+        }
+        
+        // 獲取群組名稱
+        const groupIds = Object.keys(groupStats);
+        const { data: contacts } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid, name')
+            .in('jid', groupIds);
+        
+        const groupNames = {};
+        if (contacts) {
+            contacts.forEach(c => {
+                groupNames[c.jid] = c.name || c.jid;
+            });
+        }
+        
+        // 排序並生成答案
+        const sortedGroups = Object.entries(groupStats)
+            .map(([jid, stats]) => ({
+                name: groupNames[jid] || jid,
+                count: stats.count,
+                samples: stats.samples
+            }))
+            .sort((a, b) => b.count - a.count);
+        
+        const topGroups = sortedGroups.slice(0, 10);
+        
+        let answer = `📊 找到 ${messages.length} 條包含 "${keywords.join(' 或 ')}" 的群組消息。\n\n`;
+        answer += `🏆 討論最多的群組排名：\n\n`;
+        
+        topGroups.forEach((group, index) => {
+            answer += `${index + 1}. **${group.name}** - ${group.count} 次提及\n`;
+        });
+        
+        if (topGroups.length > 0) {
+            answer += `\n📌 第一名: ${topGroups[0].name}\n`;
+            answer += `   提及次數: ${topGroups[0].count} 次\n`;
+            if (topGroups[0].samples.length > 0) {
+                answer += `\n   樣本消息:\n`;
+                topGroups[0].samples.forEach((sample, i) => {
+                    answer += `   ${i + 1}. ${sample}...\n`;
+                });
+            }
+        }
+        
+        return {
+            answer: answer,
+            sources: topGroups.map(g => ({
+                text: `${g.name}: ${g.count} 次`,
+                score: g.count
+            })),
+            method: 'direct_query'
+        };
+        
+    } catch (error) {
+        console.error('關鍵詞查詢失敗:', error);
         throw error;
     }
 }
@@ -5408,12 +5523,41 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 app.post('/api/llm/chat', async (req, res) => {
     try {
-        const { message, history = [] } = req.body;
+        const { message, history = [], sessionId } = req.body;
         
         if (!message) {
             return res.status(400).json({ success: false, error: '訊息不能為空' });
         }
 
+        // 步驟 1: 使用 RAG 搜索相關數據（如果用戶問題涉及 WhatsApp 數據）
+        let contextFromRAG = '';
+        let ragSources = [];
+        
+        // 檢測是否需要查詢數據庫（關鍵詞觸發）
+        const needsRAG = /群組|群|聊天|消息|訊息|contact|group|message|帆船|sailing|討論|提及|說過|發過/.test(message);
+        
+        if (needsRAG) {
+            try {
+                console.log('🔍 檢測到數據查詢請求，使用 RAG 搜索...');
+                const ragResult = await ragQueryWithDB(message, sessionId);
+                
+                if (ragResult && ragResult.answer) {
+                    // 如果 RAG 已經返回了完整答案，直接返回
+                    return res.json({
+                        success: true,
+                        reply: ragResult.answer,
+                        sources: ragResult.sources,
+                        model: 'Google Gemini 3 Pro Preview (via OpenRouter + RAG)',
+                        method: 'rag_enhanced'
+                    });
+                }
+            } catch (ragError) {
+                console.warn('RAG 查詢失敗，使用純 LLM 回答:', ragError.message);
+                // 繼續使用普通 LLM 回答
+            }
+        }
+
+        // 步驟 2: 使用 Gemini 生成回答（如果 RAG 沒有返回答案）
         // Convert history to OpenAI format (OpenRouter compatible)
         const messages = [
             ...history.map(h => ({
