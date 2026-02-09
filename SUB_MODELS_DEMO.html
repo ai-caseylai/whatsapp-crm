@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>子模型集成演示</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold text-gray-800 mb-2">🤖 子模型集成演示</h1>
+        <p class="text-gray-600 mb-8">点击快捷按钮填充命令，可在输入框修改后再发送</p>
+        
+        <!-- 输入框 -->
+        <div class="bg-white rounded-lg shadow-md p-4 mb-6">
+            <div class="mb-2">
+                <label class="text-sm font-bold text-gray-700">命令输入框：</label>
+                <div id="model-indicator-container" class="relative">
+                    <textarea id="demo-input" rows="2" 
+                        placeholder="點擊下方快捷按鈕填充命令..." 
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none mt-1">
+                    </textarea>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="sendCommand()" 
+                    class="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-4 py-2 rounded-lg hover:from-purple-700 hover:to-blue-700 transition">
+                    发送命令
+                </button>
+                <button onclick="clearInput()" 
+                    class="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-400 transition">
+                    清空
+                </button>
+            </div>
+        </div>
+        
+        <!-- 输出区域 -->
+        <div id="output" class="bg-white rounded-lg shadow-md p-4 mb-6 hidden">
+            <h3 class="font-bold text-gray-800 mb-2">📤 发送的命令：</h3>
+            <div id="output-content" class="bg-gray-50 p-3 rounded border border-gray-200"></div>
+        </div>
+        
+        <!-- 子模型卡片 -->
+        <div class="space-y-4">
+            
+            <!-- 图片编辑 -->
+            <div class="bg-white rounded-lg shadow-md p-4">
+                <h2 class="text-xl font-bold text-gray-800 mb-3">🎨 图片编辑 (Nano Banana)</h2>
+                <div class="bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-4">
+                    <div class="text-sm text-gray-600 mb-3">快速图片处理命令</div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="fillCommand('移除背景', 'image-edit')" 
+                            class="px-3 py-2 bg-white hover:bg-purple-100 border border-purple-300 rounded-lg transition text-sm">
+                            🎨 摳圖
+                        </button>
+                        <button onclick="fillCommand('提高亮度', 'image-edit')" 
+                            class="px-3 py-2 bg-white hover:bg-yellow-100 border border-yellow-300 rounded-lg transition text-sm">
+                            ☀️ 提亮
+                        </button>
+                        <button onclick="fillCommand('增強對比度', 'image-edit')" 
+                            class="px-3 py-2 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg transition text-sm">
+                            🎭 對比
+                        </button>
+                        <button onclick="fillCommand('裁剪成正方形', 'image-edit')" 
+                            class="px-3 py-2 bg-white hover:bg-green-100 border border-green-300 rounded-lg transition text-sm">
+                            ✂️ 裁剪
+                        </button>
+                        <button onclick="fillCommand('添加濾鏡效果', 'image-edit')" 
+                            class="px-3 py-2 bg-white hover:bg-pink-100 border border-pink-300 rounded-lg transition text-sm">
+                            ✨ 濾鏡
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 股票查询 -->
+            <div class="bg-white rounded-lg shadow-md p-4">
+                <h2 class="text-xl font-bold text-gray-800 mb-3">📈 股票查询</h2>
+                <div class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg border border-green-200 p-4">
+                    <div class="text-sm text-gray-600 mb-3">快速股票信息查询</div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="fillCommand('查詢 AAPL 的當前價格', 'stock')" 
+                            class="px-3 py-2 bg-white hover:bg-green-100 border border-green-300 rounded-lg transition text-sm">
+                            💰 當前價格
+                        </button>
+                        <button onclick="fillCommand('顯示 TSLA 過去 30 天的走勢', 'stock')" 
+                            class="px-3 py-2 bg-white hover:bg-blue-100 border border-blue-300 rounded-lg transition text-sm">
+                            📊 歷史走勢
+                        </button>
+                        <button onclick="fillCommand('比較 AAPL 和 MSFT 的表現', 'stock')" 
+                            class="px-3 py-2 bg-white hover:bg-purple-100 border border-purple-300 rounded-lg transition text-sm">
+                            🔄 股票對比
+                        </button>
+                        <button onclick="fillCommand('顯示 GOOGL 的最新新聞', 'stock')" 
+                            class="px-3 py-2 bg-white hover:bg-orange-100 border border-orange-300 rounded-lg transition text-sm">
+                            📰 最新新聞
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 日历查询 -->
+            <div class="bg-white rounded-lg shadow-md p-4">
+                <h2 class="text-xl font-bold text-gray-800 mb-3">📅 日历查询</h2>
+                <div class="bg-gradient-to-br from-blue-50 to-sky-50 rounded-lg border border-blue-200 p-4">
+                    <div class="text-sm text-gray-600 mb-3">快速日程管理</div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="fillCommand('今天有什麼安排？', 'calendar')" 
+                            class="px-3 py-2 bg-white hover:bg-blue-100 border border-blue-300 rounded-lg transition text-sm">
+                            📅 今日日程
+                        </button>
+                        <button onclick="fillCommand('本週的日程安排', 'calendar')" 
+                            class="px-3 py-2 bg-white hover:bg-indigo-100 border border-indigo-300 rounded-lg transition text-sm">
+                            🗓️ 本週日程
+                        </button>
+                        <button onclick="fillCommand('在 2026-02-10 14:00 添加活動：團隊會議', 'calendar')" 
+                            class="px-3 py-2 bg-white hover:bg-green-100 border border-green-300 rounded-lg transition text-sm">
+                            ➕ 添加活動
+                        </button>
+                        <button onclick="fillCommand('提醒我 2026-02-15 10:00 準備報告', 'calendar')" 
+                            class="px-3 py-2 bg-white hover:bg-yellow-100 border border-yellow-300 rounded-lg transition text-sm">
+                            ⏰ 設置提醒
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 医药查询 -->
+            <div class="bg-white rounded-lg shadow-md p-4">
+                <h2 class="text-xl font-bold text-gray-800 mb-3">💊 医药查询</h2>
+                <div class="bg-gradient-to-br from-red-50 to-pink-50 rounded-lg border border-red-200 p-4">
+                    <div class="text-sm text-gray-600 mb-3">药物信息快速查询</div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="fillCommand('查詢藥物 阿司匹林 的信息', 'medical')" 
+                            class="px-3 py-2 bg-white hover:bg-red-100 border border-red-300 rounded-lg transition text-sm">
+                            💊 藥物信息
+                        </button>
+                        <button onclick="fillCommand('布洛芬 的副作用是什麼？', 'medical')" 
+                            class="px-3 py-2 bg-white hover:bg-orange-100 border border-orange-300 rounded-lg transition text-sm">
+                            ⚠️ 副作用
+                        </button>
+                        <button onclick="fillCommand('阿莫西林 和 克拉維酸 會有交互作用嗎？', 'medical')" 
+                            class="px-3 py-2 bg-white hover:bg-yellow-100 border border-yellow-300 rounded-lg transition text-sm">
+                            🔄 藥物交互
+                        </button>
+                        <button onclick="fillCommand('對乙酰氨基酚 的建議劑量', 'medical')" 
+                            class="px-3 py-2 bg-white hover:bg-green-100 border border-green-300 rounded-lg transition text-sm">
+                            📏 建議劑量
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 天气查询 -->
+            <div class="bg-white rounded-lg shadow-md p-4">
+                <h2 class="text-xl font-bold text-gray-800 mb-3">🌤️ 天气查询</h2>
+                <div class="bg-gradient-to-br from-sky-50 to-blue-50 rounded-lg border border-sky-200 p-4">
+                    <div class="text-sm text-gray-600 mb-3">天气信息快速查询</div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="fillCommand('當前天氣如何？', 'weather')" 
+                            class="px-3 py-2 bg-white hover:bg-sky-100 border border-sky-300 rounded-lg transition text-sm">
+                            🌡️ 當前天氣
+                        </button>
+                        <button onclick="fillCommand('未來 7 天的天氣預報', 'weather')" 
+                            class="px-3 py-2 bg-white hover:bg-blue-100 border border-blue-300 rounded-lg transition text-sm">
+                            📊 7日預報
+                        </button>
+                        <button onclick="fillCommand('香港的天氣', 'weather')" 
+                            class="px-3 py-2 bg-white hover:bg-indigo-100 border border-indigo-300 rounded-lg transition text-sm">
+                            📍 指定地點
+                        </button>
+                        <button onclick="fillCommand('有什麼天氣警告嗎？', 'weather')" 
+                            class="px-3 py-2 bg-white hover:bg-red-100 border border-red-300 rounded-lg transition text-sm">
+                            ⚠️ 天氣警告
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+        
+        <!-- 说明 -->
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
+            <h3 class="font-bold text-blue-900 mb-2">💡 使用说明</h3>
+            <ul class="text-sm text-blue-800 space-y-1">
+                <li>1️⃣ 点击任意快捷按钮，命令会自动填充到输入框</li>
+                <li>2️⃣ 命令会被自动选中，您可以直接修改或替换</li>
+                <li>3️⃣ 修改完成后点击"发送命令"查看效果</li>
+                <li>4️⃣ 系统会记住您选择的子模型类型</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        // 当前选择的模型信息
+        window.currentCommandModel = null;
+        
+        const modelIcons = {
+            'image-edit': '🎨',
+            'stock': '📈',
+            'calendar': '📅',
+            'medical': '💊',
+            'weather': '🌤️'
+        };
+        
+        const modelNames = {
+            'image-edit': '圖片編輯 (Nano Banana)',
+            'stock': '股票查詢',
+            'calendar': '日曆查詢',
+            'medical': '醫藥查詢',
+            'weather': '天氣查詢'
+        };
+        
+        function fillCommand(command, modelType) {
+            const input = document.getElementById('demo-input');
+            
+            // 保存模型信息
+            window.currentCommandModel = {
+                type: modelType,
+                timestamp: Date.now()
+            };
+            
+            // 填充命令
+            input.value = command;
+            input.focus();
+            input.select();
+            
+            // 显示模型指示器
+            showModelIndicator(modelType);
+        }
+        
+        function showModelIndicator(modelType) {
+            // 移除旧指示器
+            const old = document.getElementById('model-indicator');
+            if (old) old.remove();
+            
+            const icon = modelIcons[modelType] || '🤖';
+            const name = modelNames[modelType] || '通用模型';
+            
+            const indicator = document.createElement('div');
+            indicator.id = 'model-indicator';
+            indicator.className = 'absolute -top-7 left-0 text-xs px-3 py-1 bg-purple-100 text-purple-700 rounded-t-lg border border-b-0 border-purple-300 shadow-sm';
+            indicator.textContent = `${icon} ${name}`;
+            
+            const container = document.getElementById('model-indicator-container');
+            container.style.position = 'relative';
+            container.appendChild(indicator);
+            
+            // 3秒后移除
+            setTimeout(() => {
+                if (indicator.parentNode) {
+                    indicator.remove();
+                }
+            }, 3000);
+        }
+        
+        function sendCommand() {
+            const input = document.getElementById('demo-input');
+            const command = input.value.trim();
+            
+            if (!command) {
+                alert('請輸入命令！');
+                return;
+            }
+            
+            const output = document.getElementById('output');
+            const outputContent = document.getElementById('output-content');
+            
+            let displayText = `<div class="mb-2"><strong>命令：</strong> ${command}</div>`;
+            
+            if (window.currentCommandModel) {
+                const icon = modelIcons[window.currentCommandModel.type] || '🤖';
+                const name = modelNames[window.currentCommandModel.type] || '通用模型';
+                displayText += `<div><strong>模型：</strong> ${icon} ${name}</div>`;
+                displayText += `<div class="mt-2 text-xs text-gray-500">實際應用中，這個命令會被路由到對應的 API 端點進行處理</div>`;
+            }
+            
+            outputContent.innerHTML = displayText;
+            output.classList.remove('hidden');
+            
+            // 滚动到输出区域
+            output.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        
+        function clearInput() {
+            document.getElementById('demo-input').value = '';
+            document.getElementById('output').classList.add('hidden');
+            window.currentCommandModel = null;
+            
+            const indicator = document.getElementById('model-indicator');
+            if (indicator) indicator.remove();
+        }
+    </script>
+</body>
+</html>

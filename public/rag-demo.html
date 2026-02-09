@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jina AI RAG Demo - WhatsApp CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- Header -->
+        <div class="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg shadow-xl p-6 mb-6 text-white">
+            <h1 class="text-3xl font-bold mb-2">🤖 Jina AI RAG 演示</h1>
+            <p class="text-blue-100">檢索增強生成 (Retrieval-Augmented Generation)</p>
+        </div>
+
+        <!-- Knowledge Base Section -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-bold mb-4 text-gray-800">📚 知識庫管理</h2>
+            
+            <div class="mb-4 flex flex-wrap gap-2">
+                <button onclick="loadKnowledgeBase()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded transition">
+                    📥 載入知識庫
+                </button>
+                <button onclick="toggleKnowledgeBase()" class="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded transition">
+                    👁️ 顯示/隱藏知識庫
+                </button>
+                <button onclick="buildFromWhatsApp()" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded transition">
+                    🔄 從 WhatsApp 對話構建
+                </button>
+                <button onclick="buildWithEmbeddings()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded transition">
+                    🚀 構建 + 生成 Embeddings
+                </button>
+                <button onclick="generateEmbeddings()" class="px-4 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded transition">
+                    🧠 生成 Embeddings
+                </button>
+            </div>
+
+            <!-- Session ID Input -->
+            <div class="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Session ID（用於從 WhatsApp 載入數據）：</label>
+                <input type="text" id="session-id-input" placeholder="輸入您的 Session ID..." 
+                       class="w-full px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500">
+                <p class="text-xs text-gray-500 mt-1">💡 提示：您可以在主頁面的連接列表中找到您的 Session ID</p>
+            </div>
+
+            <div id="knowledge-base-container" class="hidden">
+                <div class="bg-gray-50 rounded p-4 max-h-64 overflow-y-auto">
+                    <div id="knowledge-base-list" class="space-y-2 text-sm text-gray-700">
+                        載入中...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Add Document -->
+            <div class="mt-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">添加新文檔到知識庫：</label>
+                <div class="flex gap-2">
+                    <input type="text" id="new-document" placeholder="輸入新文檔內容..." 
+                           class="flex-1 px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button onclick="addDocument()" class="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded transition">
+                        ➕ 添加
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Query Section -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-bold mb-4 text-gray-800">💬 RAG 查詢</h2>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">提出問題：</label>
+                <textarea id="question-input" rows="3" 
+                          placeholder="例如：WhatsApp CRM 有什麼功能？" 
+                          class="w-full px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+            </div>
+
+            <button onclick="askQuestion()" 
+                    class="w-full px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-lg font-semibold transition shadow-lg">
+                🚀 查詢
+            </button>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-section" class="bg-white rounded-lg shadow-lg p-6 hidden">
+            <h2 class="text-xl font-bold mb-4 text-gray-800">📊 查詢結果</h2>
+            
+            <!-- Answer -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 text-gray-700">🎯 答案：</h3>
+                <div id="answer-content" class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
+                    <!-- Answer will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Sources -->
+            <div>
+                <h3 class="text-lg font-semibold mb-2 text-gray-700">📚 參考來源：</h3>
+                <div id="sources-content" class="space-y-2">
+                    <!-- Sources will be inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loading-indicator" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-6 shadow-xl">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                <p class="text-gray-700 font-semibold">處理中...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let knowledgeBase = [];
+
+        // 載入知識庫
+        async function loadKnowledgeBase() {
+            try {
+                const response = await fetch('/api/rag/knowledge-base');
+                const data = await response.json();
+                
+                if (data.success) {
+                    knowledgeBase = data.documents;
+                    displayKnowledgeBase();
+                    alert(`✅ 成功載入 ${data.total} 條知識`);
+                }
+            } catch (error) {
+                console.error('載入知識庫失敗:', error);
+                alert('❌ 載入失敗: ' + error.message);
+            }
+        }
+
+        // 顯示知識庫
+        function displayKnowledgeBase() {
+            const container = document.getElementById('knowledge-base-list');
+            if (knowledgeBase.length === 0) {
+                container.innerHTML = '<p class="text-gray-500">知識庫為空</p>';
+                return;
+            }
+
+            container.innerHTML = knowledgeBase.map((doc, index) => `
+                <div class="p-2 bg-white rounded border border-gray-200 hover:border-blue-300 transition">
+                    <span class="font-semibold text-blue-600">${index + 1}.</span> ${doc}
+                </div>
+            `).join('');
+        }
+
+        // 切換知識庫顯示
+        function toggleKnowledgeBase() {
+            const container = document.getElementById('knowledge-base-container');
+            container.classList.toggle('hidden');
+            
+            if (!container.classList.contains('hidden') && knowledgeBase.length === 0) {
+                loadKnowledgeBase();
+            }
+        }
+
+        // 添加文檔
+        async function addDocument() {
+            const input = document.getElementById('new-document');
+            const document = input.value.trim();
+            
+            if (!document) {
+                alert('⚠️ 請輸入文檔內容');
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch('/api/rag/add-document', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (data.success) {
+                    alert(`✅ ${data.message}\n總計: ${data.totalDocuments} 條`);
+                    input.value = '';
+                    await loadKnowledgeBase();
+                } else {
+                    alert('❌ 添加失敗: ' + data.error);
+                }
+            } catch (error) {
+                hideLoading();
+                console.error('添加文檔失敗:', error);
+                alert('❌ 添加失敗: ' + error.message);
+            }
+        }
+
+        // 從 WhatsApp 對話構建知識庫
+        async function buildFromWhatsApp() {
+            const sessionIdInput = document.getElementById('session-id-input');
+            const sessionId = sessionIdInput.value.trim();
+            
+            if (!sessionId) {
+                alert('⚠️ 請先輸入 Session ID');
+                sessionIdInput.focus();
+                return;
+            }
+
+            if (!confirm('確定要從 WhatsApp 對話構建知識庫嗎？\n這將載入所有聯絡人和最近的對話記錄。')) {
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch('/api/rag/build-from-all-chats', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        sessionId: sessionId
+                        // 不設置 messageLimit，載入所有消息
+                    })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (data.success) {
+                    const stats = data.statistics;
+                    alert(
+                        `✅ 知識庫構建成功！\n\n` +
+                        `📊 統計資料：\n` +
+                        `👥 聯絡人: ${stats.contacts} 個\n` +
+                        `💬 消息: ${stats.messages} 條\n` +
+                        `📚 知識文檔: ${stats.knowledgeDocuments} 條\n` +
+                        `📋 聯絡人資料: ${stats.contactDocs} 條\n` +
+                        `💭 對話記錄: ${stats.conversationDocs} 條`
+                    );
+                    await loadKnowledgeBase();
+                } else {
+                    alert('❌ 構建失敗: ' + data.error);
+                }
+            } catch (error) {
+                hideLoading();
+                console.error('構建知識庫失敗:', error);
+                alert('❌ 構建失敗: ' + error.message);
+            }
+        }
+
+        // 從 WhatsApp 構建並生成 Embeddings
+        async function buildWithEmbeddings() {
+            const sessionIdInput = document.getElementById('session-id-input');
+            const sessionId = sessionIdInput.value.trim();
+            
+            if (!sessionId) {
+                alert('⚠️ 請先輸入 Session ID');
+                sessionIdInput.focus();
+                return;
+            }
+
+            if (!confirm('確定要構建知識庫並生成 Embeddings 嗎？\n這將花費較長時間（約1-2分鐘）。')) {
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch('/api/rag/build-from-all-chats', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        sessionId: sessionId,
+                        generateEmbeddings: true 
+                        // 不設置 messageLimit，載入所有消息
+                    })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (data.success) {
+                    const stats = data.statistics;
+                    alert(
+                        `✅ 知識庫構建並 Embeddings 生成成功！\n\n` +
+                        `📊 統計資料：\n` +
+                        `👥 聯絡人: ${stats.contacts} 個\n` +
+                        `💬 消息: ${stats.messages} 條\n` +
+                        `📚 知識文檔: ${stats.knowledgeDocuments} 條\n` +
+                        `🧠 Embeddings: ${stats.embeddingsCount} 條\n` +
+                        `📋 聯絡人資料: ${stats.contactDocs} 條\n` +
+                        `💭 對話記錄: ${stats.conversationDocs} 條`
+                    );
+                    await loadKnowledgeBase();
+                } else {
+                    alert('❌ 構建失敗: ' + data.error);
+                }
+            } catch (error) {
+                hideLoading();
+                console.error('構建知識庫失敗:', error);
+                alert('❌ 構建失敗: ' + error.message);
+            }
+        }
+
+        // 生成 Embeddings（僅針對現有知識庫）
+        async function generateEmbeddings() {
+            if (!confirm('確定要為當前知識庫生成 Embeddings 嗎？\n這將花費一些時間。')) {
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch('/api/rag/generate-embeddings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (data.success) {
+                    const stats = data.statistics;
+                    alert(
+                        `✅ Embeddings 生成成功！\n\n` +
+                        `📊 統計資料：\n` +
+                        `✅ 成功: ${stats.success} 條\n` +
+                        `❌ 失敗: ${stats.failed} 條\n` +
+                        `📏 向量維度: ${stats.embeddingsDimension}`
+                    );
+                } else {
+                    alert('❌ 生成失敗: ' + data.error);
+                }
+            } catch (error) {
+                hideLoading();
+                console.error('生成 Embeddings 失敗:', error);
+                alert('❌ 生成失敗: ' + error.message);
+            }
+        }
+
+        // 提問
+        async function askQuestion() {
+            const question = document.getElementById('question-input').value.trim();
+            
+            if (!question) {
+                alert('⚠️ 請輸入問題');
+                return;
+            }
+
+            try {
+                showLoading();
+                const response = await fetch('/api/rag/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        question,
+                        useDatabase: true, // 使用數據庫向量搜索
+                        sessionId: 'sess_id73sa6oi_1770363274857' // 當前 session
+                    })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (data.success) {
+                    displayResults(data.answer, data.sources, data.method);
+                } else {
+                    alert('❌ 查詢失敗: ' + data.error);
+                }
+            } catch (error) {
+                hideLoading();
+                console.error('查詢失敗:', error);
+                alert('❌ 查詢失敗: ' + error.message);
+            }
+        }
+
+        // 顯示結果
+        function displayResults(answer, sources, method = 'unknown') {
+            const resultsSection = document.getElementById('results-section');
+            const answerContent = document.getElementById('answer-content');
+            const sourcesContent = document.getElementById('sources-content');
+
+            // 搜索方法標記
+            const methodBadge = {
+                'vector_search': '🎯 向量搜索',
+                'keyword_search': '🔍 關鍵詞搜索',
+                'memory': '💾 內存搜索',
+                'memory_fallback': '⚠️ 內存回退',
+                'unknown': '❓ 未知方法'
+            }[method] || '❓ 未知方法';
+
+            // 顯示答案和搜索方法
+            answerContent.innerHTML = `
+                <div class="mb-2">
+                    <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                        ${methodBadge}
+                    </span>
+                </div>
+                ${answer.replace(/\n/g, '<br>')}`;
+
+            // 顯示來源
+            sourcesContent.innerHTML = sources.map((source, index) => `
+                <div class="p-3 bg-gray-50 border border-gray-200 rounded">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="font-semibold text-gray-700">來源 ${index + 1}</span>
+                        <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                            相關度: ${(source.score * 100).toFixed(1)}%
+                        </span>
+                    </div>
+                    <p class="text-sm text-gray-600">${source.text}</p>
+                </div>
+            `).join('');
+
+            resultsSection.classList.remove('hidden');
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Loading 指示器
+        function showLoading() {
+            document.getElementById('loading-indicator').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-indicator').classList.add('hidden');
+        }
+
+        // 頁面載入時自動載入知識庫
+        window.addEventListener('load', () => {
+            loadKnowledgeBase();
+        });
+    </script>
+</body>
+</html>

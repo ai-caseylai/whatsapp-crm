@@ -7,7 +7,11 @@ const WebSocket = require('ws');
 const qrcode = require('qrcode');
 const mime = require('mime-types');
 const multer = require('multer'); // Import multer
+const sharp = require('sharp'); // Import sharp for image processing
 const { createClient } = require('@supabase/supabase-js');
+
+// Load environment variables
+require('dotenv').config();
 
 // Simple In-Memory Contact Cache (since makeInMemoryStore is not available in this version)
 const contactCache = new Map(); // sessionId -> Map<jid, Contact>
@@ -21,6 +25,524 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const MASTER_KEY = process.env.BAILEYS_MASTER_KEY || 'testing';
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || 'webhook_secret';
 let globalWebhookUrl = null;
+
+// --- Jina AI Config ---
+const JINA_API_KEY = process.env.JINA_API_KEY;
+
+// Jina AI RAG 知識庫（已清空，改用數據庫查詢）
+let ragKnowledgeBase = [];
+
+// Embeddings 緩存（內存中保存，避免重複計算）
+// 結構: { text: string, embedding: number[], timestamp: Date }
+let embeddingsCache = [];
+
+// Jina AI - Generate Embeddings
+async function jinaGenerateEmbedding(text) {
+    if (!JINA_API_KEY) {
+        throw new Error('JINA_API_KEY 未設置，請在 .env 文件中添加');
+    }
+    
+    try {
+        const response = await fetch('https://api.jina.ai/v1/embeddings', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${JINA_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                input: [text],
+                model: 'jina-embeddings-v2-base-zh' // 中文模型，768維
+            })
+        });
+        
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Jina Embedding API 錯誤: ${error}`);
+        }
+        
+        const data = await response.json();
+        return data.data[0].embedding; // 返回 768 維向量
+    } catch (error) {
+        console.error('Jina Embedding 失敗:', error);
+        throw error;
+    }
+}
+
+// Jina AI - Rerank Documents
+async function jinaRerank(query, documents, topN = 3) {
+    if (!JINA_API_KEY) {
+        throw new Error('JINA_API_KEY 未設置，請在 .env 文件中添加');
+    }
+    
+    try {
+        // 確保 documents 格式正確 - 應該是字符串數組
+        const formattedDocs = documents.map(doc => {
+            if (typeof doc === 'string') {
+                return doc;
+            } else if (doc && doc.text) {
+                return doc.text;
+            } else {
+                return String(doc);
+            }
+        });
+
+        const response = await fetch('https://api.jina.ai/v1/rerank', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${JINA_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'jina-reranker-v2-base-multilingual', // 多語言重排序模型
+                query: query,
+                documents: formattedDocs,
+                top_n: topN
+            })
+        });
+        
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Jina Rerank API 錯誤: ${error}`);
+        }
+        
+        const data = await response.json();
+        return data.results; // 返回排序後的結果
+    } catch (error) {
+        console.error('Jina Rerank 失敗:', error);
+        throw error;
+    }
+}
+
+// 計算余弦相似度
+function cosineSimilarity(vecA, vecB) {
+    if (vecA.length !== vecB.length) {
+        throw new Error('向量維度不匹配');
+    }
+    
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    
+    for (let i = 0; i < vecA.length; i++) {
+        dotProduct += vecA[i] * vecB[i];
+        normA += vecA[i] * vecA[i];
+        normB += vecB[i] * vecB[i];
+    }
+    
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+// 批量生成 Embeddings（帶進度回調）
+async function batchGenerateEmbeddings(texts, onProgress = null) {
+    const results = [];
+    const batchSize = 1; // 每次處理 1 條，避免速率限制（100/min）
+    const delayMs = 700; // 700ms 延遲 = ~85 請求/分鐘，留有餘地
+    let requestsThisMinute = 0;
+    let minuteStartTime = Date.now();
+    
+    for (let i = 0; i < texts.length; i += batchSize) {
+        const batch = texts.slice(i, i + batchSize);
+        const progress = Math.min(i + batchSize, texts.length);
+        const percent = ((progress / texts.length) * 100).toFixed(1);
+        
+        console.log(`🔄 進度 ${progress}/${texts.length} (${percent}%)...`);
+        
+        // 速率限制檢查：每分鐘重置計數器
+        const now = Date.now();
+        if (now - minuteStartTime >= 60000) {
+            requestsThisMinute = 0;
+            minuteStartTime = now;
+            console.log('⏰ 速率限制計數器已重置');
+        }
+        
+        // 如果接近限制（95個），等待到下一分鐘
+        if (requestsThisMinute >= 95) {
+            const waitTime = 60000 - (now - minuteStartTime) + 1000;
+            console.log(`⏳ 接近速率限制，等待 ${Math.ceil(waitTime / 1000)} 秒...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            requestsThisMinute = 0;
+            minuteStartTime = Date.now();
+        }
+        
+        const batchPromises = batch.map(async (text, idx) => {
+            let retries = 3;
+            let lastError = null;
+            
+            for (let attempt = 1; attempt <= retries; attempt++) {
+                try {
+                    const embedding = await jinaGenerateEmbedding(text);
+                    requestsThisMinute++;
+                    return { text, embedding, success: true };
+                } catch (error) {
+                    lastError = error;
+                    
+                    // 檢查是否為速率限制錯誤
+                    if (error.message && error.message.includes('RATE_REQUEST_LIMIT_EXCEEDED')) {
+                        console.log(`⏳ 速率限制觸發，等待 60 秒後重試 (嘗試 ${attempt}/${retries})...`);
+                        await new Promise(resolve => setTimeout(resolve, 60000));
+                        requestsThisMinute = 0;
+                        minuteStartTime = Date.now();
+                        continue; // 重試
+                    }
+                    
+                    // 其他錯誤，短暫延遲後重試
+                    if (attempt < retries) {
+                        console.log(`⚠️  生成失敗 (嘗試 ${attempt}/${retries})，2秒後重試...`);
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                }
+            }
+            
+            // 所有重試都失敗
+            console.error(`❌ 生成 embedding 失敗: ${text.substring(0, 50)}...`, lastError?.message);
+            return { text, embedding: null, success: false, error: lastError?.message };
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+        
+        if (onProgress) {
+            onProgress(progress, texts.length);
+        }
+        
+        // 批次間延遲（避免速率限制）
+        if (i + batchSize < texts.length) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+    }
+    
+    return results;
+}
+
+// 向量搜索（使用余弦相似度）
+async function vectorSearch(query, topK = 10) {
+    if (embeddingsCache.length === 0) {
+        throw new Error('Embeddings 緩存為空，請先生成 embeddings');
+    }
+    
+    // 生成查詢的 embedding
+    const queryEmbedding = await jinaGenerateEmbedding(query);
+    
+    // 計算所有文檔的相似度
+    const similarities = embeddingsCache.map(item => ({
+        text: item.text,
+        similarity: cosineSimilarity(queryEmbedding, item.embedding)
+    }));
+    
+    // 按相似度降序排序，返回 top K
+    return similarities
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, topK);
+}
+
+// RAG Query with Database Vector Search - 使用數據庫向量搜索的 RAG 查詢
+async function ragQueryWithDB(question, sessionId = null) {
+    try {
+        console.log(`🔍 RAG 數據庫查詢: ${question}`);
+        
+        // 步驟 1: 生成查詢的 embedding
+        const queryEmbedding = await jinaGenerateEmbedding(question);
+        
+        // 步驟 2: 在數據庫中進行向量相似度搜索
+        const { data: similarDocs, error } = await supabase.rpc('match_documents', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.1, // 降低閾值，接受更多結果
+            match_count: 10, // 增加返回數量
+            filter_session_id: sessionId
+        });
+        
+        if (error) {
+            console.error('向量搜索錯誤:', error);
+            // 如果向量搜索失敗，回退到關鍵詞搜索
+            return await ragQueryFallback(question, sessionId);
+        }
+        
+        if (!similarDocs || similarDocs.length === 0) {
+            throw new Error('未找到相關文檔');
+        }
+        
+        console.log(`📚 找到 ${similarDocs.length} 個相關文檔`);
+        
+        // 步驟 3: 構建上下文
+        const MAX_CONTEXT_LENGTH = 2000;
+        let context = similarDocs
+            .map(doc => doc.content)
+            .join('\n\n');
+        
+        if (context.length > MAX_CONTEXT_LENGTH) {
+            console.log(`⚠️ 上下文過長 (${context.length} 字符)，截斷至 ${MAX_CONTEXT_LENGTH} 字符`);
+            context = context.substring(0, MAX_CONTEXT_LENGTH) + '\n...(內容已截斷)';
+        }
+        
+        // 步驟 4: 構建增強的提示詞
+        const augmentedPrompt = `你是 WhatsApp CRM 系統的智能助手。請根據以下參考資料回答用戶的問題。
+
+參考資料：
+${context}
+
+用戶問題：${question}
+
+請根據參考資料提供準確、詳細的回答。如果參考資料中沒有相關信息，請明確告知用戶。`;
+
+        // 步驟 5: 調用 LLM 生成答案
+        const openRouterKey = process.env.GEMINI_API_KEY;
+        if (!openRouterKey) {
+            throw new Error('GEMINI_API_KEY 未設置');
+        }
+        
+        const llmResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${openRouterKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'WhatsApp CRM'
+            },
+            body: JSON.stringify({
+                model: 'google/gemini-3-pro-preview',
+                messages: [{
+                    role: 'user',
+                    content: augmentedPrompt
+                }],
+                max_tokens: 2048,
+                temperature: 0.7
+            })
+        });
+        
+        if (!llmResponse.ok) {
+            const error = await llmResponse.text();
+            throw new Error(`LLM API 錯誤: ${error}`);
+        }
+        
+        const llmData = await llmResponse.json();
+        const answer = llmData.choices[0].message.content;
+        
+        return {
+            answer: answer,
+            sources: similarDocs.map(doc => ({
+                text: doc.content.substring(0, 200) + '...',
+                score: doc.similarity
+            })),
+            method: 'vector_search'
+        };
+        
+    } catch (error) {
+        console.error('RAG 數據庫查詢失敗:', error);
+        throw error;
+    }
+}
+
+// 關鍵詞搜索回退方案
+async function ragQueryFallback(question, sessionId = null) {
+    console.log('📝 使用關鍵詞搜索回退...');
+    
+    let query = supabase
+        .from('rag_knowledge')
+        .select('*')
+        .textSearch('content', question, {
+            type: 'websearch',
+            config: 'chinese'
+        })
+        .limit(5);
+    
+    if (sessionId) {
+        query = query.eq('session_id', sessionId);
+    }
+    
+    const { data: docs, error } = await query;
+    
+    if (error || !docs || docs.length === 0) {
+        throw new Error('未找到相關文檔');
+    }
+    
+    console.log(`📚 關鍵詞搜索找到 ${docs.length} 個相關文檔`);
+    
+    // 使用 Jina Rerank 重新排序
+    const contents = docs.map(d => d.content);
+    const rankedResults = await jinaRerank(question, contents, 3);
+    
+    // 後續處理與原 ragQuery 類似...
+    const MAX_CONTEXT_LENGTH = 2000;
+    let context = rankedResults
+        .map(r => {
+            if (typeof r.document === 'string') {
+                return r.document;
+            } else if (r.document && r.document.text) {
+                return r.document.text;
+            } else {
+                return String(r.document || '');
+            }
+        })
+        .filter(text => text.length > 0)
+        .join('\n\n');
+    
+    if (context.length > MAX_CONTEXT_LENGTH) {
+        context = context.substring(0, MAX_CONTEXT_LENGTH) + '\n...(內容已截斷)';
+    }
+    
+    const augmentedPrompt = `你是 WhatsApp CRM 系統的智能助手。請根據以下參考資料回答用戶的問題。
+
+參考資料：
+${context}
+
+用戶問題：${question}
+
+請根據參考資料提供準確、詳細的回答。如果參考資料中沒有相關信息，請明確告知用戶。`;
+
+    const openRouterKey = process.env.GEMINI_API_KEY;
+    const llmResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'http://localhost:3000',
+            'X-Title': 'WhatsApp CRM'
+        },
+        body: JSON.stringify({
+            model: 'google/gemini-3-pro-preview',
+            messages: [{
+                role: 'user',
+                content: augmentedPrompt
+            }],
+            max_tokens: 2048,
+            temperature: 0.7
+        })
+    });
+    
+    if (!llmResponse.ok) {
+        const error = await llmResponse.text();
+        throw new Error(`LLM API 錯誤: ${error}`);
+    }
+    
+    const llmData = await llmResponse.json();
+    const answer = llmData.choices[0].message.content;
+    
+    return {
+        answer: answer,
+        sources: rankedResults.map(r => {
+            let text = '';
+            if (typeof r.document === 'string') {
+                text = r.document;
+            } else if (r.document && r.document.text) {
+                text = r.document.text;
+            } else {
+                text = String(r.document || '');
+            }
+            
+            return {
+                text: text,
+                score: r.relevance_score || 0
+            };
+        }),
+        method: 'keyword_search'
+    };
+}
+
+// RAG Query - 完整的檢索增強生成流程
+async function ragQuery(question, customKnowledgeBase = null) {
+    const knowledgeBase = customKnowledgeBase || ragKnowledgeBase;
+    
+    try {
+        // 步驟 1: 使用 Jina Rerank 找到最相關的文檔
+        console.log(`🔍 RAG 查詢: ${question}`);
+        const rankedResults = await jinaRerank(question, knowledgeBase, 3);
+        
+        // 步驟 2: 提取最相關的文檔作為上下文
+        // Jina Rerank 返回格式: { index, relevance_score, document: { text: "..." } }
+        const MAX_CONTEXT_LENGTH = 2000; // 限制上下文最大長度（字符）
+        
+        let context = rankedResults
+            .map(r => {
+                // 處理不同的返回格式
+                if (typeof r.document === 'string') {
+                    return r.document;
+                } else if (r.document && r.document.text) {
+                    return r.document.text;
+                } else {
+                    return String(r.document || '');
+                }
+            })
+            .filter(text => text.length > 0)
+            .join('\n\n');
+        
+        // 如果上下文太長，進行截斷
+        if (context.length > MAX_CONTEXT_LENGTH) {
+            console.log(`⚠️ 上下文過長 (${context.length} 字符)，截斷至 ${MAX_CONTEXT_LENGTH} 字符`);
+            context = context.substring(0, MAX_CONTEXT_LENGTH) + '\n...(內容已截斷)';
+        }
+        
+        console.log(`📚 找到 ${rankedResults.length} 個相關文檔，上下文長度: ${context.length} 字符`);
+        
+        if (!context || context.trim().length === 0) {
+            throw new Error('未找到相關文檔');
+        }
+        // 步驟 3: 構建增強的提示詞
+        const augmentedPrompt = `你是 WhatsApp CRM 系統的智能助手。請根據以下參考資料回答用戶的問題。
+
+參考資料：
+${context}
+
+用戶問題：${question}
+
+請根據參考資料提供準確、詳細的回答。如果參考資料中沒有相關信息，請明確告知用戶。`;
+
+        // 步驟 4: 調用 LLM 生成答案
+        const openRouterKey = process.env.GEMINI_API_KEY;
+        if (!openRouterKey) {
+            throw new Error('GEMINI_API_KEY 未設置');
+        }
+        
+        const llmResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${openRouterKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'WhatsApp CRM'
+            },
+            body: JSON.stringify({
+                model: 'google/gemini-3-pro-preview', // 使用 Gemini 3 Pro 模型
+                messages: [{
+                    role: 'user',
+                    content: augmentedPrompt
+                }],
+                max_tokens: 2048, // 限制最大生成 token 數
+                temperature: 0.7 // 控制回答的創造性
+            })
+        });
+        
+        if (!llmResponse.ok) {
+            const error = await llmResponse.text();
+            throw new Error(`LLM API 錯誤: ${error}`);
+        }
+        
+        const llmData = await llmResponse.json();
+        const answer = llmData.choices[0].message.content;
+        
+        return {
+            answer: answer,
+            sources: rankedResults.map(r => {
+                // 處理不同的返回格式
+                let text = '';
+                if (typeof r.document === 'string') {
+                    text = r.document;
+                } else if (r.document && r.document.text) {
+                    text = r.document.text;
+                } else {
+                    text = String(r.document || '');
+                }
+                
+                return {
+                    text: text,
+                    score: r.relevance_score || 0
+                };
+            })
+        };
+    } catch (error) {
+        console.error('RAG 查詢失敗:', error);
+        throw error;
+    }
+}
 
 async function sendWebhook(event, data) {
     if (!globalWebhookUrl) return;
@@ -70,8 +592,9 @@ const RECONNECT_CONFIG = {
     heartbeatInterval: 30000 // 30 seconds
 };
 
-// Middleware
-app.use(express.json());
+// Middleware - Increase JSON payload limit for large chat history
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Redirect legacy login page to root
@@ -331,11 +854,19 @@ async function startSession(sessionId) {
         return;
     }
 
-    // Upsert session record (no user_id needed now)
-    await supabase.from('whatsapp_sessions').upsert({
-        session_id: sessionId,
-        status: 'initializing'
-    });
+    // 檢查是否為臨時會話
+    const isTemporary = sessions.get(sessionId)?.isTemporary || false;
+    
+    // 只有非臨時會話才保存到數據庫
+    if (!isTemporary) {
+        // Upsert session record (no user_id needed now)
+        await supabase.from('whatsapp_sessions').upsert({
+            session_id: sessionId,
+            status: 'initializing'
+        });
+    } else {
+        console.log(`🔒 臨時會話模式：跳過數據庫保存 (${sessionId})`);
+    }
 
     // Auth state stored locally
     const authPath = path.join(__dirname, 'auth_sessions', sessionId);
@@ -402,6 +933,9 @@ async function startSession(sessionId) {
         const session = sessions.get(sessionId);
         if (!session) return;
 
+        // 🔒 檢查是否為臨時會話
+        const isTemporary = session?.isTemporary || false;
+
         // 🆕 只有在未登录状态下才显示二维码
         // 如果已经登录或正在同步，不应该再显示二维码
         if (qr) {
@@ -412,7 +946,11 @@ async function startSession(sessionId) {
                 console.log(`[${sessionId}] 📱 生成二維碼供掃描登入`);
                 session.status = 'qr';
                 session.qr = await qrcode.toDataURL(qr);
-                await supabase.from('whatsapp_sessions').update({ status: 'qr', qr_code: session.qr }).eq('session_id', sessionId);
+                
+                // 只有非臨時會話才更新數據庫
+                if (!isTemporary) {
+                    await supabase.from('whatsapp_sessions').update({ status: 'qr', qr_code: session.qr }).eq('session_id', sessionId);
+                }
                 sendWebhook('qr', { sessionId, qr: session.qr });
             } else {
                 console.log(`[${sessionId}] ⏭️  已登入，忽略新的二維碼請求`);
@@ -422,7 +960,11 @@ async function startSession(sessionId) {
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
             session.status = 'disconnected';
-            await supabase.from('whatsapp_sessions').update({ status: 'disconnected' }).eq('session_id', sessionId);
+            
+            // 只有非臨時會話才更新數據庫
+            if (!isTemporary) {
+                await supabase.from('whatsapp_sessions').update({ status: 'disconnected' }).eq('session_id', sessionId);
+            }
             sendWebhook('status', { sessionId, status: 'disconnected' });
             
             // Log the error detail
@@ -438,7 +980,11 @@ async function startSession(sessionId) {
                 if (session.reconnectAttempts > RECONNECT_CONFIG.maxAttempts) {
                     console.log(`[${sessionId}] ❌ 超過最大重連次數 (${RECONNECT_CONFIG.maxAttempts}), 停止重連`);
                     session.status = 'failed';
-                    await supabase.from('whatsapp_sessions').update({ status: 'failed' }).eq('session_id', sessionId);
+                    
+                    // 只有非臨時會話才更新數據庫
+                    if (!isTemporary) {
+                        await supabase.from('whatsapp_sessions').update({ status: 'failed' }).eq('session_id', sessionId);
+                    }
                     return;
                 }
                 
@@ -502,27 +1048,33 @@ async function startSession(sessionId) {
             const user = sock.user; 
             session.userInfo = user;
             
-            await supabase.from('whatsapp_sessions').update({ status: 'connected', qr_code: null }).eq('session_id', sessionId);
+            // 只有非臨時會話才更新數據庫
+            if (!isTemporary) {
+                await supabase.from('whatsapp_sessions').update({ status: 'connected', qr_code: null }).eq('session_id', sessionId);
+            }
             
             // Start heartbeat to keep connection alive
             startHeartbeat(sessionId, sock);
             
-            // 1. Ensure "Self" contact exists for "Note to Self"
-            const currentUser = user || state.creds.me;
-            if (currentUser && currentUser.id) {
-                const selfJid = currentUser.id.split(':')[0] + '@s.whatsapp.net'; // Handle device ID part if present
-                await supabase.from('whatsapp_contacts').upsert({
-                    session_id: sessionId,
-                    jid: selfJid,
+            // 1. Ensure "Self" contact exists for "Note to Self" (只在非臨時會話)
+            if (!isTemporary) {
+                const currentUser = user || state.creds.me;
+                if (currentUser && currentUser.id) {
+                    const selfJid = currentUser.id.split(':')[0] + '@s.whatsapp.net'; // Handle device ID part if present
+                    await supabase.from('whatsapp_contacts').upsert({
+                        session_id: sessionId,
+                        jid: selfJid,
                     name: 'Note to Self (自己)',
                     notify: 'You',
                     updated_at: new Date()
                 }, { onConflict: 'session_id,jid' });
+                }
             }
 
-            // 2. Explicitly fetch groups to ensure they are in contacts
+            // 2. Explicitly fetch groups to ensure they are in contacts (只在非臨時會話)
             // 修复：立即获取群组信息，并设置定时重试以确保获取到所有群组
-            async function fetchAndUpdateGroups() {
+            if (!isTemporary) {
+                async function fetchAndUpdateGroups() {
             try {
                 console.log(`[${sessionId}] 正在獲取所有群組信息...`);
                 const groups = await sock.groupFetchAllParticipating();
@@ -595,6 +1147,7 @@ async function startSession(sessionId) {
             }, 5 * 60 * 1000); // Every 5 minutes
             
             session.groupRefreshTimer.unref();
+            } // 結束 if (!isTemporary) 塊
         }
     });
 
@@ -613,6 +1166,10 @@ async function startSession(sessionId) {
     sock.ev.on('contacts.upsert', async (contacts) => {
         console.log(`[${sessionId}] Received ${contacts.length} contact updates`);
         
+        // 🔒 檢查是否為臨時會話
+        const session = sessions.get(sessionId);
+        const isTemporary = session?.isTemporary || false;
+        
         // Update local cache
         const cache = contactCache.get(sessionId);
         if (cache) {
@@ -629,14 +1186,23 @@ async function startSession(sessionId) {
             });
         }
         
-        // Enhance contacts with name before saving if possible?
-        // Baileys contact update usually contains the name if available.
-        saveContactsToSupabase(sessionId, contacts);
+        // 只有非臨時會話才保存到數據庫
+        if (!isTemporary) {
+            // Enhance contacts with name before saving if possible?
+            // Baileys contact update usually contains the name if available.
+            saveContactsToSupabase(sessionId, contacts);
+        } else {
+            console.log(`🔒 臨時會話模式：跳過聯絡人保存 (${contacts.length} 個)`);
+        }
     });
     
     // Add listener for contact updates (when contact info changes)
     sock.ev.on('contacts.update', async (updates) => {
         console.log(`[${sessionId}] Received ${updates.length} contact info updates`);
+        
+        // 🔒 檢查是否為臨時會話
+        const session = sessions.get(sessionId);
+        const isTemporary = session?.isTemporary || false;
         
         const cache = contactCache.get(sessionId);
         const contactsToUpdate = updates.map(update => {
@@ -654,7 +1220,8 @@ async function startSession(sessionId) {
             };
         });
         
-        if (contactsToUpdate.length > 0) {
+        // 只有非臨時會話才保存到數據庫
+        if (!isTemporary && contactsToUpdate.length > 0) {
             await supabase.from('whatsapp_contacts')
                 .upsert(contactsToUpdate, { onConflict: 'session_id,jid' });
             
@@ -869,6 +1436,16 @@ async function startSession(sessionId) {
     // Add event listener for message updates (edits, deletions)
     sock.ev.on('messages.update', async (updates) => {
         console.log(`[${sessionId}] Received ${updates.length} message updates`);
+        
+        // 🔒 檢查是否為臨時會話
+        const session = sessions.get(sessionId);
+        const isTemporary = session?.isTemporary || false;
+        
+        if (isTemporary) {
+            console.log(`🔒 臨時會話模式：跳過消息更新保存`);
+            return;
+        }
+        
         for (const update of updates) {
             if (update.key && update.update) {
                 // Update message in DB if needed
@@ -894,6 +1471,27 @@ async function startSession(sessionId) {
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         console.log(`[${sessionId}] Received ${messages.length} messages (type: ${type})`);
+        
+        // 🔒 檢查是否為臨時會話
+        const session = sessions.get(sessionId);
+        const isTemporary = session?.isTemporary || false;
+        
+        if (isTemporary) {
+            console.log(`🔒 臨時會話模式：跳過消息保存 (${messages.length} 條消息)`);
+            
+            // 仍然廣播到前端顯示，但不保存到數據庫
+            if (type === 'notify' && global.broadcastMessage) {
+                const processedMessages = await Promise.all(messages.map(async (msg) => {
+                    return await prepareMessageForSupabase(sessionId, msg, sock);
+                }));
+                
+                const validMessages = processedMessages.filter(m => m !== null);
+                validMessages.forEach(m => {
+                    global.broadcastMessage(sessionId, m.remote_jid, m);
+                });
+            }
+            return; // 臨時會話：不保存到數據庫
+        }
         
         // 修复：检查是否有群组消息，如果有则立即获取群组信息
         const groupJids = new Set();
@@ -1259,9 +1857,21 @@ async function prepareMessageForSupabase(sessionId, msg, sock) {
 // Start Session (Auto-create if not exists)
 app.post('/api/session/:id/start', async (req, res) => {
     const sessionId = req.params.id;
+    const { temporary = false } = req.body;
+    
     try {
+        // 如果是臨時會話，在內存中標記
+        if (temporary) {
+            console.log(`🔒 啟動臨時會話模式: ${sessionId}`);
+            if (!sessions.has(sessionId)) {
+                sessions.set(sessionId, {});
+            }
+            const session = sessions.get(sessionId);
+            session.isTemporary = true;
+        }
+        
         await startSession(sessionId);
-        res.json({ success: true });
+        res.json({ success: true, temporary });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -4792,8 +5402,8 @@ app.post('/api/crm/messages/:messageId/revoke', checkCaseyCRMToken, async (req, 
     }
 });
 
-// ====== LLM Assistant API (Gemini 3 via Open Router) ======
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'your-gemini-api-key-here';
+// ====== LLM Assistant API (Google Gemini 3 Pro via Open Router) ======
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'your-openrouter-api-key-here';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 app.post('/api/llm/chat', async (req, res) => {
@@ -4804,7 +5414,7 @@ app.post('/api/llm/chat', async (req, res) => {
             return res.status(400).json({ success: false, error: '訊息不能為空' });
         }
 
-        // Convert history to OpenAI format
+        // Convert history to OpenAI format (OpenRouter compatible)
         const messages = [
             ...history.map(h => ({
                 role: h.role === 'model' ? 'assistant' : h.role,
@@ -4813,7 +5423,7 @@ app.post('/api/llm/chat', async (req, res) => {
             { role: 'user', content: message }
         ];
 
-        // Call Open Router API
+        // Call Open Router API with Gemini 3 Pro
         const response = await fetch(OPENROUTER_API_URL, {
             method: 'POST',
             headers: {
@@ -4823,17 +5433,40 @@ app.post('/api/llm/chat', async (req, res) => {
                 'X-Title': 'WhatsApp CRM'
             },
             body: JSON.stringify({
-                model: 'google/gemini-2.0-flash-exp:free',
+                model: 'google/gemini-3-pro-preview',
                 messages: messages,
                 temperature: 0.9,
-                max_tokens: 2048
+                max_tokens: 8192
             })
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error('Open Router API Error:', errorText);
-            throw new Error(`Open Router API 返回錯誤: ${response.status}`);
+            console.error('Open Router API Error:', response.status, errorText);
+            
+            // 針對不同錯誤碼提供友好提示
+            let errorMessage = '';
+            if (response.status === 429) {
+                errorMessage = '⏰ API 請求頻率限制\n\n請求過於頻繁。請稍後再試（建議等待 1-2 分鐘）。';
+            } else if (response.status === 402) {
+                errorMessage = '💳 餘額不足\n\nOpen Router 帳戶餘額不足，請充值。';
+            } else if (response.status === 401) {
+                errorMessage = '🔑 API 認證失敗\n\nAPI Key 無效或已過期。';
+            } else if (response.status === 404) {
+                errorMessage = '❌ 模型不可用\n\n模型可能暫時不可用或名稱錯誤。';
+            } else {
+                errorMessage = `Open Router API 返回錯誤: ${response.status}`;
+            }
+            
+            throw new Error(errorMessage);
+        }
+
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            console.error('Non-JSON response from Open Router:', text);
+            throw new Error('API 返回了非 JSON 格式的響應，請檢查 API Key 和模型名稱。');
         }
 
         const data = await response.json();
@@ -4844,7 +5477,7 @@ app.post('/api/llm/chat', async (req, res) => {
         res.json({
             success: true,
             reply,
-            model: 'gemini-2.0-flash-exp (via OpenRouter)'
+            model: 'Google Gemini 3 Pro Preview (via OpenRouter)'
         });
 
     } catch (error) {
@@ -4859,20 +5492,44 @@ app.post('/api/llm/chat', async (req, res) => {
 // ====== Chat Analysis API ======
 app.post('/api/llm/analyze-chat', async (req, res) => {
     try {
-        const { contactName, contactId, messages } = req.body;
+        const { contactName, contactId, messages, timeRange, startDate, endDate, selectedPhotos, selectedVideos } = req.body;
         
         if (!messages || messages.length === 0) {
             return res.status(400).json({ success: false, error: '沒有訊息可分析' });
         }
 
+        // Build time range description
+        let timeDescription = '';
+        if (timeRange === 'today') {
+            timeDescription = '（分析範圍：今天）';
+        } else if (timeRange === 'week') {
+            timeDescription = '（分析範圍：最近7天）';
+        } else if (timeRange === 'month') {
+            timeDescription = '（分析範圍：最近30天）';
+        } else if (timeRange === 'custom' && startDate && endDate) {
+            timeDescription = `（分析範圍：${startDate} 至 ${endDate}）`;
+        } else {
+            timeDescription = '（分析範圍：所有訊息）';
+        }
+
         // Prepare conversation summary for analysis
         const conversation = messages.map(m => `${m.sender}: ${m.message}`).join('\n');
+        
+        // Build additional context
+        let additionalContext = '';
+        if (selectedPhotos && selectedPhotos.length > 0) {
+            additionalContext += `\n對話中包含 ${selectedPhotos.length} 張照片。`;
+        }
+        if (selectedVideos && selectedVideos.length > 0) {
+            additionalContext += `\n對話中包含 ${selectedVideos.length} 個影片。`;
+        }
         
         // Analysis prompt
         const analysisPrompt = `請分析以下 WhatsApp 對話記錄，並提供詳細的分析報告。
 
 對話對象: ${contactName}
 訊息數量: ${messages.length}
+時間範圍: ${timeDescription}${additionalContext}
 
 對話內容:
 ${conversation}
@@ -4888,7 +5545,7 @@ ${conversation}
 
 請用繁體中文回答，格式清晰易讀。`;
 
-        // Call Open Router API
+        // Call Open Router API with Gemini 3 Pro
         const response = await fetch(OPENROUTER_API_URL, {
             method: 'POST',
             headers: {
@@ -4898,19 +5555,42 @@ ${conversation}
                 'X-Title': 'WhatsApp CRM - Chat Analysis'
             },
             body: JSON.stringify({
-                model: 'google/gemini-2.0-flash-exp:free',
+                model: 'google/gemini-3-pro-preview',
                 messages: [
                     { role: 'user', content: analysisPrompt }
                 ],
                 temperature: 0.7,
-                max_tokens: 2048
+                max_tokens: 8192
             })
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error('Analysis API Error:', errorText);
-            throw new Error(`分析 API 返回錯誤: ${response.status}`);
+            console.error('Analysis API Error:', response.status, errorText);
+            
+            // 針對不同錯誤碼提供友好提示
+            let errorMessage = '';
+            if (response.status === 429) {
+                errorMessage = '⏰ API 請求頻率限制\n\n請求過於頻繁。請稍後再試（建議等待 1-2 分鐘）。\n\n提示：可以先分析較短的對話，避免頻繁請求。';
+            } else if (response.status === 402) {
+                errorMessage = '💳 餘額不足\n\nOpen Router 帳戶餘額不足，請充值。';
+            } else if (response.status === 401) {
+                errorMessage = '🔑 API 認證失敗\n\nAPI Key 無效或已過期。';
+            } else if (response.status === 404) {
+                errorMessage = '❌ 模型不可用\n\n模型可能暫時不可用或名稱錯誤。';
+            } else {
+                errorMessage = `分析 API 返回錯誤: ${response.status}`;
+            }
+            
+            throw new Error(errorMessage);
+        }
+
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            console.error('Non-JSON response from Open Router:', text);
+            throw new Error('API 返回了非 JSON 格式的響應，請檢查 API Key 和模型名稱。');
         }
 
         const data = await response.json();
@@ -4935,6 +5615,1314 @@ ${conversation}
         res.status(500).json({
             success: false,
             error: error.message || '分析失敗'
+        });
+    }
+});
+
+// ====== Image Generation API (via Open Router) ======
+app.post('/api/llm/generate-image', async (req, res) => {
+    try {
+        const { prompt, model = 'stable-diffusion', history = [] } = req.body;
+        
+        if (!prompt) {
+            return res.status(400).json({ success: false, error: '需要提供生成提示' });
+        }
+
+        // 根據模型選擇對應的 API 配置
+        let modelName, width, height, useImageGenerationAPI;
+        switch(model) {
+            case 'dalle':
+                modelName = 'openai/dall-e-3';
+                width = 1024;
+                height = 1024;
+                useImageGenerationAPI = true;
+                break;
+            case 'gemini-image':
+                modelName = 'google/gemini-3-pro-image-preview';
+                width = 1024;
+                height = 1024;
+                useImageGenerationAPI = false; // 使用 Chat Completions API
+                break;
+            case 'stable-diffusion':
+            default:
+                modelName = 'stabilityai/stable-diffusion-xl';
+                width = 1024;
+                height = 1024;
+                useImageGenerationAPI = true;
+                break;
+        }
+
+        console.log(`🎨 調用 ${modelName} 生成圖片...`);
+        console.log(`📝 生成提示: ${prompt}`);
+
+        let generatedBase64;
+
+        if (useImageGenerationAPI) {
+            // 使用 Image Generation API (Stable Diffusion, DALL-E)
+            const response = await fetch('https://openrouter.ai/api/v1/images/generations', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                    'HTTP-Referer': 'http://localhost:3000',
+                    'X-Title': 'WhatsApp CRM - Image Generation'
+                },
+                body: JSON.stringify({
+                    model: modelName,
+                    prompt: prompt,
+                    width: width,
+                    height: height,
+                    num_images: 1,
+                    response_format: 'b64_json'
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Open Router Image Generation Error:', response.status, errorText);
+                
+                let errorMessage = '';
+                if (response.status === 429) {
+                    errorMessage = '⏰ API 請求頻率限制\n\n請求過於頻繁。請稍後再試。';
+                } else if (response.status === 402) {
+                    errorMessage = '💳 餘額不足\n\nOpen Router 帳戶餘額不足，請充值。';
+                } else if (response.status === 401) {
+                    errorMessage = '🔑 API 認證失敗\n\nAPI Key 無效或已過期。';
+                } else {
+                    errorMessage = `圖片生成 API 返回錯誤: ${response.status}`;
+                }
+                
+                return res.json({
+                    success: false,
+                    error: errorMessage
+                });
+            }
+
+            const data = await response.json();
+            console.log('📦 圖片生成響應:', JSON.stringify(data, null, 2));
+
+            const imageData = data.data?.[0];
+            if (!imageData || !imageData.b64_json) {
+                throw new Error('API 未返回圖片數據');
+            }
+
+            generatedBase64 = imageData.b64_json;
+        } else {
+            // 使用 Chat Completions API (Gemini Image Preview)
+            const generationPrompt = `Generate a high-quality image based on this description: ${prompt}
+
+Please create a detailed, visually appealing image that captures the essence of the request. Focus on:
+- Accurate representation of the subject matter
+- High visual quality and detail
+- Appropriate composition and lighting
+- Professional aesthetic
+
+Output the generated image.`;
+
+            const response = await fetch(OPENROUTER_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                    'HTTP-Referer': 'http://localhost:3000',
+                    'X-Title': 'WhatsApp CRM - Image Generation'
+                },
+                body: JSON.stringify({
+                    model: modelName,
+                    modalities: ['image', 'text'], // 啟用圖片輸出
+                    messages: [
+                        ...history.map(h => ({
+                            role: h.role === 'model' ? 'assistant' : h.role,
+                            content: h.parts[0].text
+                        })),
+                        { role: 'user', content: generationPrompt }
+                    ],
+                    temperature: 0.9,
+                    max_tokens: 16384
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Gemini Image Generation Error:', response.status, errorText);
+                
+                let errorMessage = '';
+                if (response.status === 429) {
+                    errorMessage = '⏰ API 請求頻率限制\n\n請求過於頻繁。請稍後再試。';
+                } else if (response.status === 402) {
+                    errorMessage = '💳 餘額不足\n\nOpen Router 帳戶餘額不足，請充值。';
+                } else if (response.status === 401) {
+                    errorMessage = '🔑 API 認證失敗\n\nAPI Key 無效或已過期。';
+                } else {
+                    errorMessage = `圖片生成 API 返回錯誤: ${response.status}`;
+                }
+                
+                return res.json({
+                    success: false,
+                    error: errorMessage
+                });
+            }
+
+            const data = await response.json();
+            console.log('📦 Gemini 圖片生成響應:', JSON.stringify(data, null, 2));
+
+            const message = data.choices?.[0]?.message;
+            const messageImages = message?.images;
+            const messageAnnotations = message?.annotations;
+
+            // 嘗試從不同位置提取圖片
+            if (messageImages && Array.isArray(messageImages) && messageImages.length > 0) {
+                console.log(`🖼️ 發現 images 數組`);
+                for (const img of messageImages) {
+                    if (img.type === 'image_url' && img.image_url?.url) {
+                        const url = img.image_url.url;
+                        if (url.startsWith('data:image/')) {
+                            const match = url.match(/^data:image\/[^;]+;base64,(.+)$/);
+                            if (match) {
+                                generatedBase64 = match[1];
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if (messageAnnotations && Array.isArray(messageAnnotations)) {
+                console.log(`📎 發現 annotations 數組`);
+                for (const annotation of messageAnnotations) {
+                    if (annotation.type === 'image' && annotation.data) {
+                        generatedBase64 = annotation.data;
+                        break;
+                    }
+                }
+            }
+
+            if (!generatedBase64) {
+                throw new Error('Gemini 未返回圖片數據');
+            }
+        }
+
+        // Save generated image to media folder
+        const timestamp = Date.now();
+        const filename = `generated_${model}_${timestamp}.png`;
+        const outputPath = path.join(SHARED_MEDIA_DIR, filename);
+
+        // Convert base64 to buffer and save
+        const imageBuffer = Buffer.from(generatedBase64, 'base64');
+        fs.writeFileSync(outputPath, imageBuffer);
+
+        console.log(`✅ 圖片已生成並保存 (${modelName}): ${outputPath}`);
+
+        // Return success with image path
+        res.json({
+            success: true,
+            reply: `✅ 使用 ${modelName} 生成成功！`,
+            processedImagePath: filename,
+            processedImageUrl: `/media/${filename}`
+        });
+
+    } catch (error) {
+        console.error('Image Generation Error:', error);
+        res.json({
+            success: false,
+            error: error.message || '圖片生成失敗'
+        });
+    }
+});
+
+// ====== Nano Banana Background Removal API ======
+// 改为通用图片编辑 API
+app.post('/api/llm/edit-image', async (req, res) => {
+    try {
+        const { imagePath, instruction, history = [] } = req.body;
+        
+        if (!imagePath) {
+            return res.status(400).json({ success: false, error: '需要提供圖片路徑' });
+        }
+        
+        if (!instruction) {
+            return res.status(400).json({ success: false, error: '需要提供編輯指令' });
+        }
+
+        // Read image from local storage
+        const fullPath = path.join(SHARED_MEDIA_DIR, imagePath);
+        if (!fs.existsSync(fullPath)) {
+            return res.status(404).json({ success: false, error: '圖片文件不存在' });
+        }
+        
+        const imageBuffer = fs.readFileSync(fullPath);
+        const imageBase64 = imageBuffer.toString('base64');
+
+        // Determine image MIME type
+        const imageMimeType = mime.lookup(imagePath) || 'image/jpeg';
+
+        console.log(`🎨 調用 Gemini 3 Pro Image Preview 進行圖片編輯/生成...`);
+        console.log(`📝 編輯指令: ${instruction}`);
+
+        // Special handling for background removal - use generation approach
+        let useGenerationApproach = false;
+        if (instruction.includes('移除背景') || instruction.includes('去背') || instruction.toLowerCase().includes('remove background')) {
+            useGenerationApproach = true;
+            console.log('⚠️ 檢測到背景移除請求，切換到圖片生成模式');
+        }
+
+        let apiMessages;
+        if (useGenerationApproach) {
+            // For background removal, ask Gemini to generate a MASK image
+            const generationPrompt = `Analyze this image and generate a BINARY MASK PNG for background removal.
+
+TASK: Create a black and white mask image where:
+- WHITE pixels (255, 255, 255) = The main subjects to KEEP (sailboats, sails, rigging, hulls, crew members)
+- BLACK pixels (0, 0, 0) = The background to REMOVE (sky, water, mountains, cityscape, clouds)
+
+CRITICAL REQUIREMENTS:
+1. Output MUST be a grayscale or black-and-white PNG image (NOT color)
+2. Use pure white (255) for subject areas
+3. Use pure black (0) for background areas
+4. You may use gray values (1-254) for edge pixels to create smooth transitions
+5. Be precise with edges - include ALL parts of the sailboats including thin rigging
+6. The mask should have the same dimensions as the input image
+
+This mask will be used to extract the subjects from the original image with alpha transparency.`;
+            
+            apiMessages = [
+                ...history.map(h => ({
+                    role: h.role === 'model' ? 'assistant' : h.role,
+                    content: h.parts[0].text
+                })),
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:${imageMimeType};base64,${imageBase64}`
+                            }
+                        },
+                        {
+                            type: 'text',
+                            text: generationPrompt
+                        }
+                    ]
+                }
+            ];
+        } else {
+            // Prepare messages with image and instruction
+            apiMessages = [
+                ...history.map(h => ({
+                    role: h.role === 'model' ? 'assistant' : h.role,
+                    content: h.parts[0].text
+                })),
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:${imageMimeType};base64,${imageBase64}`
+                            }
+                        },
+                        {
+                            type: 'text',
+                            text: instruction
+                        }
+                    ]
+                }
+            ];
+        }
+
+        // Call Open Router API with Gemini 3 Pro Image Preview
+        console.log('🔍 Calling OpenRouter API...');
+        console.log('📝 Request body:', JSON.stringify({
+            model: 'google/gemini-3-pro-image-preview',
+            messages: apiMessages.map(m => ({ 
+                role: m.role, 
+                content: typeof m.content === 'string' ? m.content.substring(0, 100) : '[complex content]'
+            }))
+        }, null, 2));
+        
+        const response = await fetch(OPENROUTER_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'WhatsApp CRM - Image Editing'
+            },
+            body: JSON.stringify({
+                model: 'google/gemini-3-pro-image-preview', // Nano Banana Pro - supports image generation and editing
+                modalities: ['image', 'text'], // Enable image output for editing
+                messages: apiMessages,
+                temperature: 0.3,
+                max_tokens: 16384
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Gemini Image API Error:', response.status, errorText);
+            
+            let errorMessage = '';
+            if (response.status === 429) {
+                errorMessage = '⏰ API 請求頻率限制\n\n請求過於頻繁。請稍後再試。';
+            } else if (response.status === 402) {
+                errorMessage = '💳 餘額不足\n\nOpen Router 帳戶餘額不足，請充值。';
+            } else if (response.status === 401) {
+                errorMessage = '🔑 API 認證失敗\n\nAPI Key 無效或已過期。';
+            } else {
+                errorMessage = `Gemini API 返回錯誤: ${response.status}`;
+            }
+            
+            throw new Error(errorMessage);
+        }
+
+        const data = await response.json();
+        
+        console.log('📦 Gemini 響應:', JSON.stringify(data, null, 2));
+        
+        const message = data.choices?.[0]?.message;
+        const messageContent = message?.content;
+        const reasoningDetails = message?.reasoning_details;
+        const messageImages = message?.images;  // Check for images array
+        const messageAnnotations = message?.annotations;  // Check for annotations
+        
+        console.log('📝 返回內容類型:', typeof messageContent);
+        console.log('📝 reasoning_details:', reasoningDetails ? 'exists' : 'not found');
+        console.log('📝 images:', messageImages ? `exists (${messageImages.length} items)` : 'not found');
+        console.log('📝 annotations:', messageAnnotations ? `exists (${messageAnnotations.length} items)` : 'not found');
+        
+        // Try to extract image from response
+        let processedBase64;
+        let maskBase64; // NEW: Store mask if available
+        let replyText = '';
+        
+        // Priority 1: Check for images array (older API format)
+        if (messageImages && Array.isArray(messageImages) && messageImages.length > 0) {
+            console.log(`🖼️ 發現 images 數組，共 ${messageImages.length} 個項目`);
+            
+            const extractedImages = [];
+            for (const img of messageImages) {
+                if (img.type === 'image_url' && img.image_url?.url) {
+                    const url = img.image_url.url;
+                    console.log(`🔍 檢查 image_url: ${url.substring(0, 50)}...`);
+                    if (url.startsWith('data:image/')) {
+                        // Extract base64 from data URL
+                        const match = url.match(/^data:image\/[^;]+;base64,(.+)$/);
+                        if (match) {
+                            extractedImages.push(match[1]);
+                            console.log(`✅ 提取到圖片 ${extractedImages.length} base64（長度: ${match[1].length}）`);
+                        }
+                    }
+                }
+            }
+            
+            // If we have multiple images, treat them as [result, mask]
+            if (extractedImages.length >= 2) {
+                processedBase64 = extractedImages[0]; // Result image
+                maskBase64 = extractedImages[1]; // Mask image
+                console.log(`🎭 發現 Mask！將使用 Mask 進行精確抠圖`);
+            } else if (extractedImages.length === 1) {
+                processedBase64 = extractedImages[0];
+                console.log(`📷 只有一張圖片，沒有 Mask`);
+            }
+        }
+        
+        // Priority 2: Check reasoning_details for image data (newer API format)
+        if (!processedBase64 && reasoningDetails && Array.isArray(reasoningDetails)) {
+            console.log(`📋 發現 ${reasoningDetails.length} 個 reasoning_details 項目`);
+            for (const detail of reasoningDetails) {
+                console.log(`🔍 檢查項目類型: ${detail.type}`);
+                // Extract reasoning text
+                if (detail.type === 'reasoning.text' && detail.text) {
+                    replyText += detail.text + '\n';
+                    console.log('📝 提取到 reasoning 文本');
+                }
+                // Extract image data (base64 PNG in 'data' field)
+                if (detail.type === 'reasoning.encrypted' && detail.data) {
+                    const imageData = detail.data.trim();
+                    console.log(`🖼️ 檢查圖片數據，長度: ${imageData.length}, 開頭: ${imageData.substring(0, 20)}, 結尾: ${imageData.substring(imageData.length - 20)}`);
+                    
+                    // Try multiple extraction strategies
+                    let foundImage = false;
+                    
+                    // Strategy 1: Look for PNG marker (iVBOR)
+                    const pngStartIndex = imageData.indexOf('iVBOR');
+                    if (pngStartIndex !== -1) {
+                        processedBase64 = imageData.substring(pngStartIndex);
+                        console.log(`✅ 策略1成功：從 reasoning_details 中提取到 PNG 圖片數據（從位置 ${pngStartIndex} 開始，長度 ${processedBase64.length}）`);
+                        foundImage = true;
+                    }
+                    
+                    // Strategy 2: Try the whole data field as base64
+                    if (!foundImage) {
+                        try {
+                            // Attempt to decode and check if it's a valid image
+                            const buffer = Buffer.from(imageData, 'base64');
+                            // Check for PNG signature (89 50 4E 47)
+                            if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+                                processedBase64 = imageData;
+                                console.log(`✅ 策略2成功：整個 data 字段是有效的 PNG base64`);
+                                foundImage = true;
+                            }
+                        } catch (e) {
+                            console.log(`⚠️ 策略2失敗：無法作為 base64 解碼`);
+                        }
+                    }
+                    
+                    // Strategy 3: Look for common image format markers
+                    if (!foundImage) {
+                        const markers = ['/9j/', 'R0lGOD', 'UklGR']; // JPEG, GIF, WEBP markers
+                        for (const marker of markers) {
+                            const index = imageData.indexOf(marker);
+                            if (index !== -1) {
+                                processedBase64 = imageData.substring(index);
+                                console.log(`✅ 策略3成功：找到圖片標記 ${marker}，從位置 ${index} 開始`);
+                                foundImage = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!foundImage) {
+                        console.log('❌ 所有策略都失敗，未能提取圖片數據');
+                        // Log more details for debugging
+                        console.log(`🔍 Data 字段樣本（前100字符）: ${imageData.substring(0, 100)}`);
+                        console.log(`🔍 Data 字段樣本（後100字符）: ${imageData.substring(Math.max(0, imageData.length - 100))}`);
+                    }
+                }
+            }
+        }
+        
+        // If no image in reasoning_details, parse content field
+        if (!processedBase64 && messageContent) {
+            // Parse response - could be text, image, or both
+            if (typeof messageContent === 'string') {
+                // Check if contains base64 image
+                const base64Match = messageContent.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
+                if (base64Match) {
+                    processedBase64 = base64Match[1];
+                    // Extract text part (remove image data)
+                    replyText = messageContent.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '').trim();
+                } else {
+                    // Just text response
+                    replyText += messageContent;
+                }
+            } else if (Array.isArray(messageContent)) {
+                // Handle array of content items
+                for (const item of messageContent) {
+                    if (item.type === 'text') {
+                        replyText += item.text || item.content || '';
+                    } else if (item.type === 'image_url' && item.image_url?.url) {
+                        const url = item.image_url.url;
+                        if (url.includes('base64,')) {
+                            processedBase64 = url.split('base64,')[1];
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If we got a processed image, save it
+        if (processedBase64) {
+            const processedFilename = `edited_${Date.now()}.png`;
+            const processedPath = path.join(SHARED_MEDIA_DIR, processedFilename);
+            
+            try {
+                let processedBuffer;
+                
+                // For background removal with mask-based approach
+                if (useGenerationApproach) {
+                    console.log('🎭 檢測到背景移除模式，將使用 Mask 抠圖原始圖片...');
+                    
+                    // The returned image should be a mask (black and white)
+                    const maskBuffer = Buffer.from(processedBase64, 'base64');
+                    
+                    // Load the ORIGINAL uploaded image (not the Gemini result)
+                    const originalImageBuffer = fs.readFileSync(fullPath);
+                    
+                    console.log('📷 讀取原始圖片:', fullPath);
+                    
+                    // Get original image and mask data
+                    const [imageData, maskData] = await Promise.all([
+                        sharp(originalImageBuffer)
+                            .ensureAlpha()
+                            .raw()
+                            .toBuffer({ resolveWithObject: true }),
+                        sharp(maskBuffer)
+                            .greyscale()
+                            .resize(null, null, { fit: 'fill' }) // Ensure same size as original
+                            .raw()
+                            .toBuffer({ resolveWithObject: true })
+                    ]);
+                    
+                    console.log(`📐 原始圖片尺寸: ${imageData.info.width}x${imageData.info.height}`);
+                    console.log(`📐 Mask 尺寸: ${maskData.info.width}x${maskData.info.height}`);
+                    
+                    // Check if mask and image have same dimensions
+                    if (imageData.info.width !== maskData.info.width || imageData.info.height !== maskData.info.height) {
+                        console.log('⚠️ Mask 尺寸與原圖不符，調整 Mask 尺寸...');
+                        const resizedMaskData = await sharp(maskBuffer)
+                            .greyscale()
+                            .resize(imageData.info.width, imageData.info.height, { fit: 'fill' })
+                            .raw()
+                            .toBuffer({ resolveWithObject: true });
+                        maskData.data = resizedMaskData.data;
+                        maskData.info = resizedMaskData.info;
+                    }
+                    
+                    const imagePixels = new Uint8Array(imageData.data);
+                    const maskPixels = new Uint8Array(maskData.data);
+                    
+                    // Apply mask to original image's alpha channel
+                    // White in mask (255) = opaque (keep), Black in mask (0) = transparent (remove)
+                    for (let i = 0; i < imagePixels.length / 4; i++) {
+                        const pixelIndex = i * 4;
+                        const maskIndex = i * maskData.info.channels;
+                        
+                        // Use mask brightness as alpha value
+                        imagePixels[pixelIndex + 3] = maskPixels[maskIndex];
+                    }
+                    
+                    processedBuffer = await sharp(imagePixels, {
+                        raw: {
+                            width: imageData.info.width,
+                            height: imageData.info.height,
+                            channels: 4
+                        }
+                    })
+                    .png()
+                    .toBuffer();
+                    
+                    console.log(`✅ 使用 Mask 完成抠圖！（應用到原始圖片）`);
+                    
+                } else {
+                    // For other edits, just save the Gemini result directly
+                    console.log('💾 保存 Gemini 編輯結果...');
+                    processedBuffer = Buffer.from(processedBase64, 'base64');
+                }
+                
+                fs.writeFileSync(processedPath, processedBuffer);
+                console.log(`✅ 圖片編輯完成（含 Alpha 透明度），保存至: ${processedFilename}`);
+                
+                return res.json({
+                    success: true,
+                    reply: (replyText || '✅ 圖片編輯完成！背景已設置為透明。').trim(),
+                    processedImagePath: processedFilename,
+                    processedImageUrl: `/media/${processedFilename}`,
+                    originalImagePath: imagePath
+                });
+            } catch (saveError) {
+                console.error('❌ 保存圖片失敗:', saveError);
+                console.error('錯誤詳情:', saveError.stack);
+            }
+        }
+        
+        // No image returned, just text response or empty
+        console.error('❌ 未能提取圖片數據');
+        res.json({
+            success: true,
+            reply: replyText.trim() || '已處理您的請求，但未返回圖片數據。Gemini 可能無法執行此編輯指令。'
+        });
+
+    } catch (error) {
+        console.error('Image Editing Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || '圖片編輯失敗'
+        });
+    }
+});
+
+// ====== AI Image Generation API ======
+app.post('/api/llm/generate-image', async (req, res) => {
+    try {
+        const { prompt, history = [] } = req.body;
+        
+        if (!prompt) {
+            return res.status(400).json({ success: false, error: '需要提供圖片描述' });
+        }
+
+        console.log(`🎨 調用 Nano Banana Pro 生成圖片...`);
+        console.log(`📝 提示詞: ${prompt}`);
+
+        // Prepare messages for image generation
+        const messages = [
+            ...history.map(h => ({
+                role: h.role === 'model' ? 'assistant' : h.role,
+                content: h.parts[0].text
+            })),
+            {
+                role: 'user',
+                content: prompt
+            }
+        ];
+
+        // Call Open Router API with Gemini 3 Pro Image Preview
+        const response = await fetch(OPENROUTER_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                'HTTP-Referer': 'http://localhost:3000',
+                'X-Title': 'WhatsApp CRM - Image Generation'
+            },
+            body: JSON.stringify({
+                model: 'google/gemini-3-pro-image-preview', // Nano Banana Pro
+                modalities: ['image', 'text'], // Enable image output
+                messages: messages,
+                temperature: 0.7,
+                max_tokens: 16384
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Gemini Image Generation API Error:', response.status, errorText);
+            
+            let errorMessage = '';
+            if (response.status === 429) {
+                errorMessage = '⏰ API 請求頻率限制\n\n請求過於頻繁。請稍後再試。';
+            } else if (response.status === 402) {
+                errorMessage = '💳 餘額不足\n\nOpen Router 帳戶餘額不足，請充值。';
+            } else if (response.status === 401) {
+                errorMessage = '🔑 API 認證失敗\n\nAPI Key 無效或已過期。';
+            } else {
+                errorMessage = `Gemini API 返回錯誤: ${response.status}`;
+            }
+            
+            throw new Error(errorMessage);
+        }
+
+        const data = await response.json();
+        
+        console.log('📦 Gemini 響應:', JSON.stringify(data, null, 2));
+        
+        const messageContent = data.choices?.[0]?.message?.content;
+        
+        if (!messageContent) {
+            console.error('❌ Gemini 未返回內容');
+            return res.json({
+                success: true,
+                reply: '抱歉，無法生成圖片。請嘗試更具體的描述。'
+            });
+        }
+
+        console.log('📝 返回內容類型:', typeof messageContent);
+        
+        // Try to extract image from response
+        let generatedBase64;
+        let replyText = '';
+        
+        // Parse response - could be text, image, or both
+        if (typeof messageContent === 'string') {
+            // Check if contains base64 image
+            const base64Match = messageContent.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
+            if (base64Match) {
+                generatedBase64 = base64Match[1];
+                // Extract text part (remove image data)
+                replyText = messageContent.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '').trim();
+            } else {
+                // Just text response
+                replyText = messageContent;
+            }
+        } else if (Array.isArray(messageContent)) {
+            // Handle array of content items
+            for (const item of messageContent) {
+                if (item.type === 'text') {
+                    replyText += item.text || item.content || '';
+                } else if (item.type === 'image_url' && item.image_url?.url) {
+                    const url = item.image_url.url;
+                    if (url.includes('base64,')) {
+                        generatedBase64 = url.split('base64,')[1];
+                    }
+                }
+            }
+        }
+        
+        // If we got a generated image, save it
+        if (generatedBase64) {
+            const generatedFilename = `generated_${Date.now()}.png`;
+            const generatedPath = path.join(SHARED_MEDIA_DIR, generatedFilename);
+            
+            try {
+                fs.writeFileSync(generatedPath, Buffer.from(generatedBase64, 'base64'));
+                console.log(`✅ 圖片生成完成，保存至: ${generatedFilename}`);
+                
+                return res.json({
+                    success: true,
+                    reply: replyText || '✅ 圖片生成完成！',
+                    processedImagePath: generatedFilename,
+                    processedImageUrl: `/media/${generatedFilename}`
+                });
+            } catch (saveError) {
+                console.error('❌ 保存圖片失敗:', saveError);
+            }
+        }
+        
+        // No image returned, just text response
+        res.json({
+            success: true,
+            reply: replyText || '抱歉，無法生成圖片。Gemini 返回了文本回應而非圖片。請嘗試更具體的描述，例如：「請生成一張...的圖片」'
+        });
+
+    } catch (error) {
+        console.error('Image Generation Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || '圖片生成失敗'
+        });
+    }
+});
+
+// ====== Send Image Back to WhatsApp ======
+app.post('/api/session/:id/send-image', async (req, res) => {
+    const sessionId = req.params.id;
+    const { remoteJid, imagePath, caption } = req.body;
+    
+    try {
+        const session = sessions.get(sessionId);
+        if (!session || !session.sock) {
+            return res.status(400).json({ error: 'Session not active' });
+        }
+
+        // Read image from local storage
+        const fullPath = path.join(SHARED_MEDIA_DIR, imagePath);
+        if (!fs.existsSync(fullPath)) {
+            return res.status(404).json({ error: '圖片文件不存在' });
+        }
+
+        const imageBuffer = fs.readFileSync(fullPath);
+        
+        // Send image via WhatsApp
+        await session.sock.sendMessage(remoteJid, {
+            image: imageBuffer,
+            caption: caption || ''
+        });
+
+        console.log(`✅ 圖片已發送至 ${remoteJid}`);
+        
+        res.json({ 
+            success: true, 
+            message: '圖片已發送',
+            imagePath 
+        });
+
+    } catch (error) {
+        console.error('Send Image Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ====== Jina AI RAG API ======
+
+// RAG 查詢端點
+app.post('/api/rag/query', async (req, res) => {
+    try {
+        const { question, knowledgeBase, sessionId, useDatabase = true } = req.body;
+        
+        if (!question) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供問題' 
+            });
+        }
+        
+        console.log(`🤖 RAG 查詢: ${question}`);
+        console.log(`📊 使用數據庫: ${useDatabase}`);
+        
+        let result;
+        
+        // 優先使用數據庫向量搜索
+        if (useDatabase) {
+            try {
+                result = await ragQueryWithDB(question, sessionId);
+            } catch (dbError) {
+                console.warn('數據庫查詢失敗，回退到內存查詢:', dbError.message);
+                result = await ragQuery(question, knowledgeBase);
+                result.method = 'memory_fallback';
+            }
+        } else {
+            // 使用自定義知識庫或默認知識庫（內存）
+            result = await ragQuery(question, knowledgeBase);
+            result.method = result.method || 'memory';
+        }
+        
+        res.json({
+            success: true,
+            answer: result.answer,
+            sources: result.sources,
+            method: result.method,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('RAG Query Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'RAG 查詢失敗'
+        });
+    }
+});
+
+// 添加文檔到知識庫
+app.post('/api/rag/add-document', async (req, res) => {
+    try {
+        const { document } = req.body;
+        
+        if (!document || typeof document !== 'string') {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供有效的文檔內容（字符串）' 
+            });
+        }
+        
+        ragKnowledgeBase.push(document);
+        
+        console.log(`📚 新增文檔到知識庫: ${document.substring(0, 50)}...`);
+        
+        res.json({
+            success: true,
+            message: '文檔已添加到知識庫',
+            totalDocuments: ragKnowledgeBase.length
+        });
+        
+    } catch (error) {
+        console.error('Add Document Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 獲取知識庫所有文檔
+app.get('/api/rag/knowledge-base', async (req, res) => {
+    try {
+        res.json({
+            success: true,
+            documents: ragKnowledgeBase,
+            total: ragKnowledgeBase.length
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 生成 Embedding（用於向量搜索）
+app.post('/api/rag/embed', async (req, res) => {
+    try {
+        const { text } = req.body;
+        
+        if (!text) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供文本內容' 
+            });
+        }
+        
+        const embedding = await jinaGenerateEmbedding(text);
+        
+        res.json({
+            success: true,
+            embedding: embedding,
+            dimensions: embedding.length
+        });
+        
+    } catch (error) {
+        console.error('Embedding Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Rerank 文檔（重新排序）
+app.post('/api/rag/rerank', async (req, res) => {
+    try {
+        const { query, documents, topN = 3 } = req.body;
+        
+        if (!query || !documents || !Array.isArray(documents)) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供查詢和文檔列表（數組）' 
+            });
+        }
+        
+        const results = await jinaRerank(query, documents, topN);
+        
+        res.json({
+            success: true,
+            results: results
+        });
+        
+    } catch (error) {
+        console.error('Rerank Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 從聊天記錄構建知識庫（示例）
+app.post('/api/rag/build-from-messages', async (req, res) => {
+    try {
+        const { sessionId, jid, limit = 100 } = req.body;
+        
+        if (!sessionId || !jid) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供 sessionId 和 jid' 
+            });
+        }
+        
+        // 從數據庫獲取最近的消息
+        const { data: messages, error } = await supabase
+            .from('whatsapp_messages')
+            .select('content, push_name, message_timestamp')
+            .eq('session_id', sessionId)
+            .eq('remote_jid', jid)
+            .order('message_timestamp', { ascending: false })
+            .limit(limit);
+        
+        if (error) throw error;
+        
+        // 將消息轉換為知識庫文檔
+        const newDocs = messages
+            .filter(m => m.content && m.content.length > 10) // 過濾掉太短的消息
+            .map(m => {
+                const timestamp = new Date(m.message_timestamp).toLocaleString('zh-HK');
+                const sender = m.push_name || '未知';
+                return `[${timestamp}] ${sender}: ${m.content}`;
+            });
+        
+        // 添加到知識庫（去重）
+        newDocs.forEach(doc => {
+            if (!ragKnowledgeBase.includes(doc)) {
+                ragKnowledgeBase.push(doc);
+            }
+        });
+        
+        console.log(`📚 從聊天記錄添加了 ${newDocs.length} 條知識到知識庫`);
+        
+        res.json({
+            success: true,
+            message: `成功添加 ${newDocs.length} 條聊天記錄到知識庫`,
+            totalDocuments: ragKnowledgeBase.length
+        });
+        
+    } catch (error) {
+        console.error('Build Knowledge Base Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 從所有 WhatsApp 聯絡人和對話構建知識庫
+app.post('/api/rag/build-from-all-chats', async (req, res) => {
+    try {
+        const { sessionId, messageLimit = null, generateEmbeddings = false } = req.body;
+        
+        if (!sessionId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供 sessionId' 
+            });
+        }
+        
+        console.log(`🔄 開始從所有聊天記錄構建知識庫 (Session: ${sessionId})`);
+        
+        // 1. 獲取所有聯絡人信息（無限制）
+        let allContacts = [];
+        let contactPage = 0;
+        const contactPageSize = 1000;
+        
+        while (true) {
+            const { data: contacts, error: contactError } = await supabase
+                .from('whatsapp_contacts')
+                .select('jid, name, notify, is_group')
+                .eq('session_id', sessionId)
+                .range(contactPage * contactPageSize, (contactPage + 1) * contactPageSize - 1);
+            
+            if (contactError) throw contactError;
+            
+            if (!contacts || contacts.length === 0) break;
+            
+            allContacts.push(...contacts);
+            console.log(`👥 已載入 ${allContacts.length} 個聯絡人...`);
+            
+            if (contacts.length < contactPageSize) break; // 最後一頁
+            contactPage++;
+        }
+        
+        console.log(`✅ 總共找到 ${allContacts.length} 個聯絡人`);
+        
+        // 2. 為每個聯絡人添加基本信息到知識庫
+        const contactDocs = allContacts.map(c => {
+            const type = c.is_group ? '群組' : '個人';
+            const name = c.name || c.notify || c.jid;
+            return `聯絡人資料: ${name} (${type}) - ID: ${c.jid}`;
+        });
+        
+        // 3. 獲取所有對話的最近消息（無限制或按 messageLimit）
+        let allMessages = [];
+        let messagePage = 0;
+        const messagePageSize = 1000;
+        
+        console.log(`💬 開始載入消息...`);
+        
+        while (true) {
+            let query = supabase
+                .from('whatsapp_messages')
+                .select('remote_jid, content, push_name, message_timestamp, from_me')
+                .eq('session_id', sessionId)
+                .order('message_timestamp', { ascending: false })
+                .range(messagePage * messagePageSize, (messagePage + 1) * messagePageSize - 1);
+            
+            const { data: messages, error: messageError } = await query;
+            
+            if (messageError) throw messageError;
+            
+            if (!messages || messages.length === 0) break;
+            
+            allMessages.push(...messages);
+            console.log(`💬 已載入 ${allMessages.length} 條消息...`);
+            
+            // 如果設置了 messageLimit，檢查是否達到
+            if (messageLimit && allMessages.length >= messageLimit * allContacts.length) {
+                allMessages = allMessages.slice(0, messageLimit * allContacts.length);
+                break;
+            }
+            
+            if (messages.length < messagePageSize) break; // 最後一頁
+            messagePage++;
+        }
+        
+        console.log(`✅ 總共找到 ${allMessages.length} 條消息`);
+        
+        // 4. 按聯絡人分組消息
+        const messagesByContact = {};
+        allMessages.forEach(msg => {
+            if (!messagesByContact[msg.remote_jid]) {
+                messagesByContact[msg.remote_jid] = [];
+            }
+            // 如果設置了 messageLimit，限制每個聯絡人的消息數
+            if (!messageLimit || messagesByContact[msg.remote_jid].length < messageLimit) {
+                messagesByContact[msg.remote_jid].push(msg);
+            }
+        });
+        
+        // 5. 為每個聯絡人生成對話摘要
+        const conversationDocs = [];
+        for (const contact of allContacts) {
+            const messages = messagesByContact[contact.jid] || [];
+            if (messages.length > 0) {
+                const contactName = contact.name || contact.notify || '未知聯絡人';
+                const recentMessages = messages.slice(0, 10); // 只取最近10條用於摘要
+                
+                // 生成對話摘要
+                const conversationSummary = recentMessages
+                    .map(m => {
+                        const timestamp = new Date(m.message_timestamp).toLocaleString('zh-HK');
+                        const sender = m.from_me ? '我' : (m.push_name || contactName);
+                        const content = m.content ? m.content.substring(0, 100) : ''; // 限制長度
+                        return `${timestamp} - ${sender}: ${content}`;
+                    })
+                    .join('\n');
+                
+                conversationDocs.push(`與 ${contactName} 的對話記錄:\n${conversationSummary}`);
+                
+                // 提取關鍵信息（最後一條消息）
+                const lastMessage = messages[0];
+                if (lastMessage.content && lastMessage.content.length > 10) {
+                    conversationDocs.push(`${contactName} 最近說: ${lastMessage.content}`);
+                }
+            }
+        }
+        
+        // 6. 清空舊知識庫，添加新數據
+        ragKnowledgeBase = [
+            "WhatsApp CRM 支持群組管理功能，可以查看所有群組成員和歷史消息",
+            "系統支持批量發送營銷消息給多個聯絡人",
+            "所有聊天記錄會自動保存到 Supabase 數據庫",
+            "臨時會話模式不會保存任何數據到數據庫，4小時後自動登出",
+            ...contactDocs,
+            ...conversationDocs
+        ];
+        
+        console.log(`✅ 知識庫構建完成！`);
+        console.log(`📊 統計: ${allContacts.length} 個聯絡人, ${allMessages.length} 條消息, ${ragKnowledgeBase.length} 條知識`);
+        
+        // 7. 生成 Embeddings（如果啟用）
+        let embeddingsGenerated = false;
+        if (generateEmbeddings) {
+            console.log(`🔄 開始生成 ${ragKnowledgeBase.length} 條知識的 embeddings...`);
+            const embeddingResults = await batchGenerateEmbeddings(ragKnowledgeBase);
+            
+            // 保存成功的 embeddings 到緩存
+            embeddingsCache = embeddingResults
+                .filter(r => r.success)
+                .map(r => ({
+                    text: r.text,
+                    embedding: r.embedding,
+                    timestamp: new Date()
+                }));
+            
+            embeddingsGenerated = true;
+            console.log(`✅ 成功生成 ${embeddingsCache.length} 條 embeddings`);
+        }
+        
+        res.json({
+            success: true,
+            message: '成功從所有聊天記錄構建知識庫',
+            statistics: {
+                contacts: allContacts.length,
+                messages: allMessages.length,
+                knowledgeDocuments: ragKnowledgeBase.length,
+                contactDocs: contactDocs.length,
+                conversationDocs: conversationDocs.length,
+                embeddingsGenerated: embeddingsGenerated,
+                embeddingsCount: embeddingsCache.length
+            }
+        });
+        
+    } catch (error) {
+        console.error('Build Knowledge Base from All Chats Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 生成所有知識庫的 Embeddings
+app.post('/api/rag/generate-embeddings', async (req, res) => {
+    try {
+        if (ragKnowledgeBase.length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '知識庫為空，請先構建知識庫' 
+            });
+        }
+        
+        console.log(`🔄 開始生成 ${ragKnowledgeBase.length} 條知識的 embeddings...`);
+        
+        const results = await batchGenerateEmbeddings(ragKnowledgeBase);
+        
+        // 保存成功的 embeddings 到緩存
+        embeddingsCache = results
+            .filter(r => r.success)
+            .map(r => ({
+                text: r.text,
+                embedding: r.embedding,
+                timestamp: new Date()
+            }));
+        
+        const successCount = results.filter(r => r.success).length;
+        const failCount = results.filter(r => !r.success).length;
+        
+        console.log(`✅ Embeddings 生成完成: ${successCount} 成功, ${failCount} 失敗`);
+        
+        res.json({
+            success: true,
+            message: `成功生成 ${successCount} 條 embeddings`,
+            statistics: {
+                total: results.length,
+                success: successCount,
+                failed: failCount,
+                embeddingsDimension: embeddingsCache[0]?.embedding.length || 0
+            }
+        });
+        
+    } catch (error) {
+        console.error('Generate Embeddings Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 向量搜索 API
+app.post('/api/rag/vector-search', async (req, res) => {
+    try {
+        const { query, topK = 10 } = req.body;
+        
+        if (!query) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供查詢內容' 
+            });
+        }
+        
+        if (embeddingsCache.length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Embeddings 未生成，請先調用 /api/rag/generate-embeddings' 
+            });
+        }
+        
+        const results = await vectorSearch(query, topK);
+        
+        res.json({
+            success: true,
+            results: results,
+            query: query,
+            totalSearched: embeddingsCache.length
+        });
+        
+    } catch (error) {
+        console.error('Vector Search Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 混合搜索：向量搜索 + Rerank
+app.post('/api/rag/hybrid-search', async (req, res) => {
+    try {
+        const { query, vectorTopK = 20, rerankTopN = 5 } = req.body;
+        
+        if (!query) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供查詢內容' 
+            });
+        }
+        
+        // 步驟 1: 向量搜索（召回階段）
+        let candidateTexts;
+        if (embeddingsCache.length > 0) {
+            console.log(`🔍 步驟 1: 向量搜索 (召回 top ${vectorTopK})`);
+            const vectorResults = await vectorSearch(query, vectorTopK);
+            candidateTexts = vectorResults.map(r => r.text);
+        } else {
+            console.log(`⚠️ Embeddings 未生成，使用全部知識庫`);
+            candidateTexts = ragKnowledgeBase;
+        }
+        
+        // 步驟 2: Rerank 精排
+        console.log(`🔍 步驟 2: Rerank 精排 (top ${rerankTopN})`);
+        const rerankedResults = await jinaRerank(query, candidateTexts, rerankTopN);
+        
+        res.json({
+            success: true,
+            results: rerankedResults,
+            query: query,
+            searchStrategy: embeddingsCache.length > 0 ? 'hybrid' : 'rerank_only'
+        });
+        
+    } catch (error) {
+        console.error('Hybrid Search Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
         });
     }
 });
