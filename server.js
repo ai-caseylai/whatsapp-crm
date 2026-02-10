@@ -1951,8 +1951,8 @@ async function startSession(sessionId) {
         }
         
         // 🤖 自動回覆功能: 當用戶（自己）發送消息時，自動調用 Gemini 並回覆
-        // 處理新消息（notify）和最近的消息（append），但要過濾掉舊的歷史消息
-        if (type === 'notify' || type === 'append') {
+        // 只處理新消息（notify），不處理歷史消息（append）或其他類型
+        if (type === 'notify') {
             console.log(`🤖 [${sessionId}] 收到 ${messages.length} 条 ${type} 消息，开始检查是否需要自动回复...`);
             
             for (const msg of messages) {
@@ -1970,6 +1970,29 @@ async function startSession(sessionId) {
                 if (messageAge > 30000) { // 30 秒
                     console.log(`🤖 [${sessionId}] ⏰ 跳過舊消息（${Math.round(messageAge/1000)}秒前）: ${msg.key.remoteJid}`);
                     continue;
+                }
+                
+                // 🚫 過濾機器人自己的回覆：檢查消息內容是否包含 RAG 特徵
+                const realMessage = unwrapMessage(msg.message);
+                if (realMessage) {
+                    let messageText = '';
+                    if (realMessage.conversation) {
+                        messageText = realMessage.conversation;
+                    } else if (realMessage.extendedTextMessage?.text) {
+                        messageText = realMessage.extendedTextMessage.text;
+                    }
+                    
+                    // 如果消息包含 RAG 回復特徵，跳過（這是機器人自己的回覆）
+                    if (messageText && (
+                        messageText.includes('📚 來源:') || 
+                        messageText.includes('【網頁搜索結果】') ||
+                        messageText.includes('沒有找到包含') ||
+                        messageText.includes('RAG 數據庫中未找到')
+                    )) {
+                        console.log(`🤖 [${sessionId}] 🚫 跳過機器人自己的回覆`);
+                        processedMessageIds.add(messageId); // 標記為已處理
+                        continue;
+                    }
                 }
                 
                 console.log(`🤖 [${sessionId}] 检查消息: fromMe=${msg.key.fromMe}, remoteJid=${msg.key.remoteJid}, age=${Math.round(messageAge/1000)}s`);
