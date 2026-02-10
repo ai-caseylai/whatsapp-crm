@@ -346,26 +346,74 @@ async function queryGroupsByKeyword(question, keywords, sessionId = null) {
     try {
         console.log(`📊 直接查詢群組關鍵詞: ${keywords.join(', ')}`);
         
-        // 構建查詢條件
-        const orConditions = keywords.map(kw => `content.ilike.%${kw}%`).join(',');
-        
-        let query = supabase
-            .from('whatsapp_messages')
-            .select('remote_jid, content, message_timestamp')
-            .or(orConditions)
-            .like('remote_jid', '%@g.us'); // 只要群組
+        // 方案 1: 先獲取所有群組 JID，然後逐個查詢（避免超時）
+        let groupQuery = supabase
+            .from('whatsapp_contacts')
+            .select('jid, name')
+            .eq('is_group', true);
         
         if (sessionId) {
-            query = query.eq('session_id', sessionId);
+            groupQuery = groupQuery.eq('session_id', sessionId);
         }
         
-        const { data: messages, error } = await query.limit(1000);
+        const { data: groups, error: groupError } = await groupQuery.limit(200);
         
-        if (error) {
-            throw error;
+        if (groupError) {
+            throw groupError;
         }
         
-        if (!messages || messages.length === 0) {
+        if (!groups || groups.length === 0) {
+            return {
+                answer: '沒有找到任何群組。',
+                sources: [],
+                method: 'direct_query'
+            };
+        }
+        
+        console.log(`📋 找到 ${groups.length} 個群組，開始統計關鍵詞...`);
+        
+        // 方案 2: 對每個群組進行計數查詢（使用 count 而非獲取所有數據）
+        const groupStats = {};
+        const batchSize = 10; // 每批處理 10 個群組
+        
+        for (let i = 0; i < groups.length; i += batchSize) {
+            const batch = groups.slice(i, i + batchSize);
+            const promises = batch.map(async (group) => {
+                try {
+                    // 為每個關鍵詞構建查詢
+                    const counts = await Promise.all(keywords.map(async (keyword) => {
+                        const { count, error } = await supabase
+                            .from('whatsapp_messages')
+                            .select('id', { count: 'exact', head: true })
+                            .eq('remote_jid', group.jid)
+                            .ilike('content', `%${keyword}%`);
+                        
+                        if (error) {
+                            console.warn(`查詢群組 ${group.name} 關鍵詞 ${keyword} 失敗:`, error.message);
+                            return 0;
+                        }
+                        return count || 0;
+                    }));
+                    
+                    const totalCount = counts.reduce((sum, c) => sum + c, 0);
+                    
+                    if (totalCount > 0) {
+                        groupStats[group.jid] = {
+                            name: group.name || group.jid,
+                            count: totalCount
+                        };
+                    }
+                } catch (err) {
+                    console.warn(`處理群組 ${group.name} 時出錯:`, err.message);
+                }
+            });
+            
+            await Promise.all(promises);
+            console.log(`進度: ${Math.min(i + batchSize, groups.length)}/${groups.length}`);
+        }
+        
+        // 如果沒有找到任何結果
+        if (Object.keys(groupStats).length === 0) {
             return {
                 answer: `沒有找到包含 "${keywords.join(' 或 ')}" 的群組消息。`,
                 sources: [],
@@ -373,48 +421,14 @@ async function queryGroupsByKeyword(question, keywords, sessionId = null) {
             };
         }
         
-        // 統計每個群組的消息數
-        const groupStats = {};
-        for (const msg of messages) {
-            const groupId = msg.remote_jid;
-            if (!groupStats[groupId]) {
-                groupStats[groupId] = {
-                    count: 0,
-                    samples: []
-                };
-            }
-            groupStats[groupId].count++;
-            if (groupStats[groupId].samples.length < 3) {
-                groupStats[groupId].samples.push(msg.content?.substring(0, 100));
-            }
-        }
-        
-        // 獲取群組名稱
-        const groupIds = Object.keys(groupStats);
-        const { data: contacts } = await supabase
-            .from('whatsapp_contacts')
-            .select('jid, name')
-            .in('jid', groupIds);
-        
-        const groupNames = {};
-        if (contacts) {
-            contacts.forEach(c => {
-                groupNames[c.jid] = c.name || c.jid;
-            });
-        }
-        
         // 排序並生成答案
         const sortedGroups = Object.entries(groupStats)
-            .map(([jid, stats]) => ({
-                name: groupNames[jid] || jid,
-                count: stats.count,
-                samples: stats.samples
-            }))
+            .map(([jid, stats]) => stats)
             .sort((a, b) => b.count - a.count);
         
         const topGroups = sortedGroups.slice(0, 10);
         
-        let answer = `📊 找到 ${messages.length} 條包含 "${keywords.join(' 或 ')}" 的群組消息。\n\n`;
+        let answer = `📊 在 ${groups.length} 個群組中搜索，找到 ${sortedGroups.length} 個群組包含 "${keywords.join(' 或 ')}"。\n\n`;
         answer += `🏆 討論最多的群組排名：\n\n`;
         
         topGroups.forEach((group, index) => {
@@ -424,12 +438,6 @@ async function queryGroupsByKeyword(question, keywords, sessionId = null) {
         if (topGroups.length > 0) {
             answer += `\n📌 第一名: ${topGroups[0].name}\n`;
             answer += `   提及次數: ${topGroups[0].count} 次\n`;
-            if (topGroups[0].samples.length > 0) {
-                answer += `\n   樣本消息:\n`;
-                topGroups[0].samples.forEach((sample, i) => {
-                    answer += `   ${i + 1}. ${sample}...\n`;
-                });
-            }
         }
         
         return {
@@ -438,7 +446,7 @@ async function queryGroupsByKeyword(question, keywords, sessionId = null) {
                 text: `${g.name}: ${g.count} 次`,
                 score: g.count
             })),
-            method: 'direct_query'
+            method: 'direct_query_optimized'
         };
         
     } catch (error) {
