@@ -2050,22 +2050,6 @@ async function startSession(sessionId) {
                                                 // 發送提示消息
                                                 await sock.sendMessage(msg.key.remoteJid, { text: reply });
                                                 
-                                                // 廣播提示到 AI 助手欄
-                                                if (global.broadcastMessage) {
-                                                    global.broadcastMessage(sessionId, 'ai-assistant', {
-                                                        content: messageText,
-                                                        from_me: true,
-                                                        timestamp: Date.now() / 1000,
-                                                        message_type: 'user'
-                                                    });
-                                                    global.broadcastMessage(sessionId, 'ai-assistant', {
-                                                        content: reply,
-                                                        from_me: false,
-                                                        timestamp: Date.now() / 1000,
-                                                        message_type: 'assistant'
-                                                    });
-                                                }
-                                                
                                                 // 繼續使用網頁搜索
                                                 reply = '';
                                             }
@@ -2165,26 +2149,6 @@ async function startSession(sessionId) {
                                         // 發送回覆
                                         await sock.sendMessage(msg.key.remoteJid, { text: reply });
                                         console.log(`📤 [${sessionId}] 已發送自動回覆到 ${msg.key.remoteJid}`);
-                                        
-                                        // 📢 廣播用戶消息到 AI 助手欄
-                                        if (global.broadcastMessage) {
-                                            console.log(`📢 [${sessionId}] 廣播用戶消息到 AI 助手欄`);
-                                            global.broadcastMessage(sessionId, 'ai-assistant', {
-                                                content: messageText,
-                                                from_me: true,
-                                                timestamp: Date.now() / 1000,
-                                                message_type: 'user'
-                                            });
-                                            
-                                            // 📢 廣播回覆到 AI 助手欄
-                                            console.log(`📢 [${sessionId}] 廣播${usedRAG ? 'RAG' : 'Gemini'}回覆到 AI 助手欄`);
-                                            global.broadcastMessage(sessionId, 'ai-assistant', {
-                                                content: reply,
-                                                from_me: false,
-                                                timestamp: Date.now() / 1000,
-                                                message_type: 'assistant'
-                                            });
-                                        }
                                     } else {
                                         console.warn(`⚠️ [${sessionId}] 沒有返回回覆內容`);
                                     }
