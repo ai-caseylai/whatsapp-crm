@@ -1951,12 +1951,21 @@ async function startSession(sessionId) {
         }
         
         // 🤖 自動回覆功能: 當用戶（自己）發送消息時，自動調用 Gemini 並回覆
-        // 只處理新消息（notify），不處理歷史消息（append）
-        if (type === 'notify') {
-            console.log(`🤖 [${sessionId}] 收到 ${messages.length} 条 notify 消息，开始检查是否需要自动回复...`);
+        // 處理新消息（notify）和最近的消息（append），但要過濾掉舊的歷史消息
+        if (type === 'notify' || type === 'append') {
+            console.log(`🤖 [${sessionId}] 收到 ${messages.length} 条 ${type} 消息，开始检查是否需要自动回复...`);
             
             for (const msg of messages) {
-                console.log(`🤖 [${sessionId}] 检查消息: fromMe=${msg.key.fromMe}, remoteJid=${msg.key.remoteJid}`);
+                // 🕐 過濾舊消息：只處理最近 30 秒內的消息（避免對歷史消息觸發回覆）
+                const messageTimestamp = msg.messageTimestamp ? parseInt(msg.messageTimestamp) * 1000 : Date.now();
+                const messageAge = Date.now() - messageTimestamp;
+                
+                if (messageAge > 30000) { // 30 秒
+                    console.log(`🤖 [${sessionId}] ⏰ 跳過舊消息（${Math.round(messageAge/1000)}秒前）: ${msg.key.remoteJid}`);
+                    continue;
+                }
+                
+                console.log(`🤖 [${sessionId}] 检查消息: fromMe=${msg.key.fromMe}, remoteJid=${msg.key.remoteJid}, age=${Math.round(messageAge/1000)}s`);
                 
                 // 🔧 修改: 處理自己發送的消息（fromMe=true）
                 // 支持 Note to Self、群組、個人對話
