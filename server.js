@@ -638,6 +638,11 @@ ${context}
         }),
         method: 'keyword_search'
     };
+    
+    } catch (error) {
+        console.error('❌ RAG 回退查詢失敗:', error);
+        throw error;
+    }
 }
 
 // RAG Query - 完整的檢索增強生成流程
