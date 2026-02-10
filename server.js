@@ -1849,25 +1849,35 @@ async function startSession(sessionId) {
                     });
                 }
 
-                // 🔧 只广播实时新消息（type='notify'），历史同步消息（type='append'）静默保存
-                // type='notify': 实时接收的新消息（用户刚发的）→ 自动打开聊天
-                // type='append': 历史同步的旧消息（从服务器拉取的）→ 静默保存到数据库
-                if (type === 'notify') {
+                // 🔧 广播消息到前端
+                // type='notify': 实时接收的新消息（用户刚发的）
+                // type='append': 可能是历史消息，也可能是通过 Web 界面发送的新消息
+                // 判断：如果是最近30秒内的消息，就广播到前端
+                if (type === 'notify' || type === 'append') {
                     // 🆕 等待一小段时间（200ms）确保媒体文件已写入磁盘
                     await new Promise(resolve => setTimeout(resolve, 200));
                     
                     validMessages.forEach(m => {
-                        sendWebhook('message', { sessionId, message: m });
+                        // 检查消息时间，只广播最近30秒的消息
+                        const messageTime = new Date(m.message_timestamp).getTime();
+                        const now = Date.now();
+                        const messageAge = now - messageTime;
                         
-                        // Broadcast via WebSocket for real-time updates
-                        if (global.broadcastMessage) {
-                            const hasMedia = m.attachment_path || ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(m.message_type);
-                            console.log(`[${sessionId}] 📤 广播实时新消息到前端: ${m.remote_jid}${hasMedia ? ' (含媒体)' : ''}`);
-                            global.broadcastMessage(sessionId, m.remote_jid, m);
+                        if (messageAge <= 30000) { // 30秒内
+                            sendWebhook('message', { sessionId, message: m });
+                            
+                            // Broadcast via WebSocket for real-time updates
+                            if (global.broadcastMessage) {
+                                const hasMedia = m.attachment_path || ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(m.message_type);
+                                console.log(`[${sessionId}] 📤 广播${type}消息到前端: ${m.remote_jid}${hasMedia ? ' (含媒体)' : ''} (age: ${Math.round(messageAge/1000)}s)`);
+                                global.broadcastMessage(sessionId, m.remote_jid, m);
+                            }
+                        } else {
+                            console.log(`[${sessionId}] 💾 旧消息已静默保存: ${m.remote_jid} (age: ${Math.round(messageAge/1000)}s)`);
                         }
                     });
-                } else if (type === 'append') {
-                    console.log(`[${sessionId}] 💾 历史消息已静默保存 (${validMessages.length} 条)`);
+                } else {
+                    console.log(`[${sessionId}] 💾 ${type} 类型消息已保存 (${validMessages.length} 条)`);
                 }
             }
         }
