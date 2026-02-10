@@ -2385,6 +2385,18 @@
                             const role = data.message.message_type === 'user' ? 'user' : 'model';
                             const content = data.message.content;
                             
+                            // 🔧 防重复：检查最近的消息是否相同
+                            const recentMessages = llmChatHistory.slice(-5); // 检查最近5条消息
+                            const isDuplicate = recentMessages.some(msg => 
+                                msg.role === role && 
+                                msg.parts[0]?.text === content
+                            );
+                            
+                            if (isDuplicate) {
+                                console.warn(`⚠️ 检测到重复消息，跳过: ${content.substring(0, 50)}...`);
+                                return;
+                            }
+                            
                             // 添加到 UI
                             addLLMMessageToUI(role, content, false, false);
                             

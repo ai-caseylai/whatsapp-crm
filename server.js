@@ -2024,7 +2024,8 @@ async function startSession(sessionId) {
                                                 if (ragResult.sources && ragResult.sources.length > 0) {
                                                     reply += '\n\n📚 來源:\n';
                                                     ragResult.sources.forEach((source, idx) => {
-                                                        reply += `${idx + 1}. ${source}\n`;
+                                                        const sourceText = typeof source === 'string' ? source : (source.text || JSON.stringify(source));
+                                                        reply += `${idx + 1}. ${sourceText}\n`;
                                                     });
                                                 }
                                             }
