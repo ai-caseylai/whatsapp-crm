@@ -1956,6 +1956,13 @@ async function startSession(sessionId) {
             console.log(`🤖 [${sessionId}] 收到 ${messages.length} 条 ${type} 消息，开始检查是否需要自动回复...`);
             
             for (const msg of messages) {
+                // 🔒 消息去重：检查消息是否已经处理过
+                const messageId = msg.key.id;
+                if (processedMessageIds.has(messageId)) {
+                    console.log(`🤖 [${sessionId}] ⚠️ 跳过重复消息: ${messageId}`);
+                    continue;
+                }
+                
                 // 🕐 過濾舊消息：只處理最近 30 秒內的消息（避免對歷史消息觸發回覆）
                 const messageTimestamp = msg.messageTimestamp ? parseInt(msg.messageTimestamp) * 1000 : Date.now();
                 const messageAge = Date.now() - messageTimestamp;
@@ -1996,6 +2003,10 @@ async function startSession(sessionId) {
                         // 如果有文本消息，調用 Gemini 並回覆
                         if (messageText && messageText.trim()) {
                             console.log(`🤖 [${sessionId}] 收到消息來自 ${msg.key.remoteJid}: "${messageText}"`);
+                            
+                            // ✅ 标记消息为已处理
+                            processedMessageIds.add(messageId);
+                            console.log(`🔒 [${sessionId}] 消息已标记为已处理: ${messageId}`);
                             
                             // 異步處理，不阻塞消息保存
                             (async () => {
@@ -4549,6 +4560,20 @@ function broadcastMessage(sessionId, chatId, message) {
 
 // Make broadcastMessage available globally
 global.broadcastMessage = broadcastMessage;
+
+// 🔧 消息去重：记录最近处理过的消息 ID
+const processedMessageIds = new Set();
+const MAX_PROCESSED_IDS = 1000; // 最多保留 1000 条消息 ID
+
+// 清理函数：定期清理旧的消息 ID
+setInterval(() => {
+    if (processedMessageIds.size > MAX_PROCESSED_IDS) {
+        const idsArray = Array.from(processedMessageIds);
+        const toRemove = idsArray.slice(0, idsArray.length - MAX_PROCESSED_IDS / 2);
+        toRemove.forEach(id => processedMessageIds.delete(id));
+        console.log(`🧹 清理了 ${toRemove.length} 条旧的消息 ID，当前保留: ${processedMessageIds.size}`);
+    }
+}, 60000); // 每分钟检查一次
 
 // ==================== LID Mapping Management APIs ====================
 
