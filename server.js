@@ -1951,8 +1951,8 @@ async function startSession(sessionId) {
         }
         
         // 🤖 自動回覆功能: 當用戶（自己）發送消息時，自動調用 Gemini 並回覆
-        // 只處理新消息（notify），不處理歷史消息（append）或其他類型
-        if (type === 'notify') {
+        // 處理新消息（notify）和最近的消息（append），但通過多重過濾確保不重複
+        if (type === 'notify' || type === 'append') {
             console.log(`🤖 [${sessionId}] 收到 ${messages.length} 条 ${type} 消息，开始检查是否需要自动回复...`);
             
             for (const msg of messages) {
@@ -1963,7 +1963,11 @@ async function startSession(sessionId) {
                     continue;
                 }
                 
-                // 🕐 過濾舊消息：只處理最近 30 秒內的消息（避免對歷史消息觸發回覆）
+                // ✅ 立即标记为已处理（在任何异步操作之前）
+                processedMessageIds.add(messageId);
+                console.log(`🔒 [${sessionId}] 消息已标记为已处理: ${messageId}`);
+                
+                // 🕐 過濾舊消息：只處理最近 30 秒內的消息
                 const messageTimestamp = msg.messageTimestamp ? parseInt(msg.messageTimestamp) * 1000 : Date.now();
                 const messageAge = Date.now() - messageTimestamp;
                 
@@ -1972,30 +1976,34 @@ async function startSession(sessionId) {
                     continue;
                 }
                 
-                // 🚫 過濾機器人自己的回覆：檢查消息內容是否包含 RAG 特徵
+                // 提取消息内容
                 const realMessage = unwrapMessage(msg.message);
-                if (realMessage) {
-                    let messageText = '';
-                    if (realMessage.conversation) {
-                        messageText = realMessage.conversation;
-                    } else if (realMessage.extendedTextMessage?.text) {
-                        messageText = realMessage.extendedTextMessage.text;
-                    }
-                    
-                    // 如果消息包含 RAG 回復特徵，跳過（這是機器人自己的回覆）
-                    if (messageText && (
-                        messageText.includes('📚 來源:') || 
-                        messageText.includes('【網頁搜索結果】') ||
-                        messageText.includes('沒有找到包含') ||
-                        messageText.includes('RAG 數據庫中未找到')
-                    )) {
-                        console.log(`🤖 [${sessionId}] 🚫 跳過機器人自己的回覆`);
-                        processedMessageIds.add(messageId); // 標記為已處理
-                        continue;
-                    }
+                if (!realMessage) {
+                    console.log(`🤖 [${sessionId}] ⚠️ 无法解析消息`);
+                    continue;
                 }
                 
-                console.log(`🤖 [${sessionId}] 检查消息: fromMe=${msg.key.fromMe}, remoteJid=${msg.key.remoteJid}, age=${Math.round(messageAge/1000)}s`);
+                let messageText = '';
+                if (realMessage.conversation) {
+                    messageText = realMessage.conversation;
+                } else if (realMessage.extendedTextMessage?.text) {
+                    messageText = realMessage.extendedTextMessage.text;
+                }
+                
+                // 🚫 過濾機器人自己的回覆：檢查消息內容是否包含 RAG 特徵
+                if (messageText && (
+                    messageText.includes('📚 來源:') || 
+                    messageText.includes('【網頁搜索結果】') ||
+                    messageText.includes('沒有找到包含') ||
+                    messageText.includes('RAG 數據庫中未找到') ||
+                    messageText.includes('🏆 討論最多的群組') ||
+                    (messageText.includes('📊 在 ') && messageText.includes(' 條消息中找到'))
+                )) {
+                    console.log(`🤖 [${sessionId}] 🚫 跳過機器人自己的回覆: "${messageText.substring(0, 50)}..."`);
+                    continue;
+                }
+                
+                console.log(`🤖 [${sessionId}] 检查消息: fromMe=${msg.key.fromMe}, remoteJid=${msg.key.remoteJid}, age=${Math.round(messageAge/1000)}s, text="${messageText.substring(0, 30)}..."`);
                 
                 // 🔧 修改: 處理自己發送的消息（fromMe=true）
                 // 支持 Note to Self、群組、個人對話
@@ -2012,24 +2020,9 @@ async function startSession(sessionId) {
                         const msgType = isNoteToSelf ? 'Note to Self' : isGroup ? '群組' : '個人對話';
                         console.log(`🤖 [${sessionId}] ✅ 这是发送到 ${msgType} 的消息，准备自动回复...`);
                         
-                        // 提取消息文本
-                        const realMessage = unwrapMessage(msg.message);
-                        if (!realMessage) continue;
-                    
-                        let messageText = '';
-                        if (realMessage.conversation) {
-                            messageText = realMessage.conversation;
-                        } else if (realMessage.extendedTextMessage?.text) {
-                            messageText = realMessage.extendedTextMessage.text;
-                        }
-                        
-                        // 如果有文本消息，調用 Gemini 並回覆
+                        // 如果有文本消息，調用 Gemini 並回覆（使用前面已提取的 messageText）
                         if (messageText && messageText.trim()) {
                             console.log(`🤖 [${sessionId}] 收到消息來自 ${msg.key.remoteJid}: "${messageText}"`);
-                            
-                            // ✅ 标记消息为已处理
-                            processedMessageIds.add(messageId);
-                            console.log(`🔒 [${sessionId}] 消息已标记为已处理: ${messageId}`);
                             
                             // 異步處理，不阻塞消息保存
                             (async () => {
