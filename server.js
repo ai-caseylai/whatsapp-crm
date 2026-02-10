@@ -1953,8 +1953,8 @@ async function startSession(sessionId) {
             for (const msg of messages) {
                 console.log(`🤖 [${sessionId}] 检查消息: fromMe=${msg.key.fromMe}, remoteJid=${msg.key.remoteJid}`);
                 
-                // 🔧 修改: 只處理自己發送的消息（fromMe=true）
-                // 並且是發送到自己的消息（Note to Self）：可能是 @lid 或 @s.whatsapp.net 格式
+                // 🔧 修改: 處理自己發送的消息（fromMe=true）
+                // 支持 Note to Self、群組、個人對話
                 if (msg.key.fromMe && msg.key.remoteJid) {
                     const isNoteToSelf = msg.key.remoteJid.endsWith('@lid') || 
                                         msg.key.remoteJid.endsWith('@s.whatsapp.net');
@@ -1963,9 +1963,10 @@ async function startSession(sessionId) {
                     
                     console.log(`🤖 [${sessionId}] 消息类型检查: isNoteToSelf=${isNoteToSelf}, isGroup=${isGroup}, isBroadcast=${isBroadcast}`);
                     
-                    // 只处理 Note to Self 的消息，跳过群组和广播
-                    if (isNoteToSelf && !isGroup && !isBroadcast) {
-                        console.log(`🤖 [${sessionId}] ✅ 这是发送到 Note to Self 的消息，准备自动回复...`);
+                    // 🆕 支持 Note to Self 和群組消息，跳过广播
+                    if ((isNoteToSelf || isGroup) && !isBroadcast) {
+                        const msgType = isNoteToSelf ? 'Note to Self' : isGroup ? '群組' : '個人對話';
+                        console.log(`🤖 [${sessionId}] ✅ 这是发送到 ${msgType} 的消息，准备自动回复...`);
                         
                         // 提取消息文本
                         const realMessage = unwrapMessage(msg.message);
