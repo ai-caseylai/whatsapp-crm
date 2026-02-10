@@ -1,109 +1,64 @@
 #!/bin/bash
-# WhatsApp CRM 自动部署脚本
 
-echo "========================================"
-echo "WhatsApp CRM 自动部署"
-echo "开始时间: $(date)"
-echo "========================================"
+# WhatsApp CRM v1.55.0 部署脚本
 
-# 进入项目目录
-cd /home/ubuntu/whatsapp-bot
+echo "🚀 开始部署 WhatsApp CRM v1.55.0..."
 
-# 显示当前状态
-echo ""
-echo "📌 当前版本:"
-git log -1 --oneline 2>/dev/null || echo "未知版本"
+# 1. 上传文件到服务器
+echo "📤 上传文件到服务器..."
+rsync -avz \
+    --exclude 'node_modules' \
+    --exclude 'auth_info_baileys' \
+    --exclude 'data' \
+    --exclude '.git' \
+    --exclude 'media' \
+    --exclude '.env' \
+    ./ lighthouse@whatsapp-crm.techforliving.app:/home/lighthouse/whatsapp-crm/
 
-# 从 GitHub 拉取最新代码
-echo ""
-echo "📥 正在从 GitHub 拉取最新代码..."
-git fetch origin main
-
-# 检查是否有更新
-LOCAL=$(git rev-parse HEAD 2>/dev/null)
-REMOTE=$(git rev-parse origin/main 2>/dev/null)
-
-if [ "$LOCAL" = "$REMOTE" ]; then
-    echo "✅ 代码已是最新版本，无需更新"
-    exit 0
-fi
-
-echo "🔄 发现新版本，准备更新..."
-echo "   本地: ${LOCAL:0:7}"
-echo "   远程: ${REMOTE:0:7}"
-
-# 保存本地更改（如果有）
-if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    echo "⚠️  检测到本地更改，正在保存..."
-    git stash save "Auto-stash before deploy at $(date)"
-fi
-
-# 记录更新前的版本
-OLD_VERSION=$(git rev-parse --short HEAD 2>/dev/null)
-
-# 拉取最新代码
-echo ""
-echo "🔄 正在拉取代码..."
-git pull origin main
-
-# 记录更新后的版本
-NEW_VERSION=$(git rev-parse --short HEAD 2>/dev/null)
-
-# 显示更新日志
-if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+if [ $? -ne 0 ]; then
+    echo "❌ 文件上传失败，请检查 SSH 连接"
     echo ""
-    echo "📝 更新内容:"
-    git log --oneline ${OLD_VERSION}..${NEW_VERSION} 2>/dev/null || echo "无法获取更新日志"
-fi
-
-# 检查是否需要安装依赖
-if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-    if git diff ${OLD_VERSION}..${NEW_VERSION} --name-only 2>/dev/null | grep -q "package.json"; then
-        echo ""
-        echo "📦 检测到 package.json 更改，正在安装依赖..."
-        npm install --production
-    fi
-fi
-
-# 检查 ecosystem.config.js 是否存在
-if [ -f "ecosystem.config.js" ]; then
+    echo "💡 故障排查："
+    echo "   1. 检查 SSH 密钥: ls -la ~/.ssh/"
+    echo "   2. 添加密钥: ssh-add ~/.ssh/id_ed25519"
+    echo "   3. 测试连接: ssh lighthouse@whatsapp-crm.techforliving.app \"echo OK\""
     echo ""
-    echo "🔄 使用 PM2 配置文件重启所有服务..."
-    pm2 reload ecosystem.config.js --update-env
-    pm2 save
-else
-    # 回退到单独重启
-    echo ""
-    echo "🔄 正在重启服务..."
-    pm2 restart whatsapp-bot --update-env
-
-    # 检查是否需要重启管理服务和 Webhook
-    if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-        if git diff ${OLD_VERSION}..${NEW_VERSION} --name-only 2>/dev/null | grep -qE "(admin-server\.js|webhook-server\.js)"; then
-            echo "🔄 检测到管理服务或 Webhook 更改，正在重启..."
-            pm2 restart whatsapp-admin --update-env 2>/dev/null || echo "   (管理服务未运行，跳过)"
-            pm2 restart whatsapp-webhook --update-env 2>/dev/null || echo "   (Webhook 服务未运行，跳过)"
-        fi
-    fi
+    echo "📖 详细说明请查看: DEPLOY_MANUAL_v1.55.0.md"
+    exit 1
 fi
 
-# 等待服务启动
-sleep 3
+echo "✅ 文件上传成功"
 
-# 检查服务状态
+# 2. 重启服务
+echo "🔄 重启 PM2 服务..."
+ssh lighthouse@whatsapp-crm.techforliving.app "cd /home/lighthouse/whatsapp-crm && pm2 restart whatsapp-bot --update-env"
+
+if [ $? -ne 0 ]; then
+    echo "❌ 服务重启失败"
+    exit 1
+fi
+
+echo "✅ 服务重启成功"
 echo ""
-echo "📊 服务状态:"
-pm2 list
-
-# 显示最新版本
+echo "🎉 部署完成！版本：v1.55.0"
 echo ""
-echo "✅ 部署完成！"
-echo "📌 当前版本: $(git log -1 --oneline)"
-
+echo "📝 更新内容："
+echo "  v1.55.0: 改进 AI 助手对话历史保存"
+echo "    - ✅ 对话记录自动保存到 localStorage"
+echo "    - ✅ 刷新页面后自动恢复历史对话"
+echo "    - ✅ 改进清空对话提示信息"
+echo "    - ✅ 首次使用显示保存提示"
 echo ""
-echo "========================================"
-echo "部署完成时间: $(date)"
-echo "========================================"
+echo "  v1.54.0: 改进头像加载调试"
+echo "  v1.53.0: 修复联系人名称显示"
+echo ""
+echo "💡 验证步骤："
+echo "  1. 打开 https://whatsapp-crm.techforliving.app"
+echo "  2. 在 AI 助手中发送几条消息"
+echo "  3. 刷新页面（Cmd+R）"
+echo "  4. 验证历史对话是否恢复"
+echo "  5. 点击「清空对话」按钮，检查新提示"
+echo ""
+echo "📖 详细说明: DEPLOY_MANUAL_v1.55.0.md"
 
-# 可选：发送通知（需要配置）
-# curl -X POST "your-webhook-url" -d "{\"text\":\"WhatsApp CRM 已更新到版本 $NEW_VERSION\"}"
+

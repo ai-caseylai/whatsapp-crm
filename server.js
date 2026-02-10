@@ -240,34 +240,79 @@ async function ragQueryWithDB(question, sessionId = null) {
     try {
         console.log(`🔍 RAG 數據庫查詢: ${question}`);
         
-        // 檢測特定查詢類型
-        const isSailingQuery = /帆船|sailing/i.test(question);
-        const isGroupQuery = /群組|群|group/i.test(question);
+        // 🔧 改進關鍵詞提取邏輯
+        // 檢測是否為群組查詢 (支持繁体字異體字: 群/羣)
+        const isGroupQuery = /[群羣][組组]|[群羣]|group/i.test(question);
         
-        // 如果是關於帆船的群組查詢，直接查詢數據庫
-        if (isSailingQuery && isGroupQuery) {
-            return await queryGroupsByKeyword(question, ['帆船', 'sailing'], sessionId);
+        // 🆕 從用戶問題中提取實際的關鍵詞（更智能的方法）
+        let extractedKeywords = [];
+        
+        // 🔧 先修正常見的打字錯誤和變體
+        let normalizedQuestion = question
+            .replace(/那那[群羣]/g, '哪個群')  // "那那群" → "哪個群"
+            .replace(/那那組/g, '哪個組')      // "那那組" → "哪個組"
+            .replace(/那個/g, '哪個')          // 統一使用"哪個"
+            .replace(/那组/g, '哪個組');       // "那组" → "哪個組"
+        
+        console.log(`🔧 標準化問題: ${question} → ${normalizedQuestion}`);
+        
+        // 常見的查詢模式（支持更多變體）
+        const patterns = [
+            /(?:哪个|哪個)[群羣][組组].*?(?:有)?講(.+?)(?:呢|嗎|麼|的|了|\?|？|$)/i,  // "哪個群組有講花呢" → 花
+            /(?:哪个|哪個)[群羣].*?(?:有)?講(.+?)(?:呢|嗎|麼|的|了|\?|？|$)/i,       // "哪個群有講花" → 花
+            /有講(.+?)(?:呢|嗎|麼|的|了|\?|？|$)/,  // "有講花呢" → 花
+            /討論(.+?)(?:的|嗎|麼|呢|了|\?|？|$)/,  // "討論帆船的" → 帆船
+            /提到(.+?)(?:的|嗎|麼|呢|了|\?|？|$)/,  // "提到天氣嗎" → 天氣
+            /關於(.+?)(?:的|嗎|麼|呢|了|\?|？|$)/,  // "關於投資的" → 投資
+            /說過(.+?)(?:的|嗎|麼|呢|了|\?|？|$)/,  // "說過什麼" → (無法提取,使用向量搜索)
+            /講(.+?)(?:呢|嗎|麼|的|了|\?|？|$)/,    // "講花呢" → 花
+        ];
+        
+        for (const pattern of patterns) {
+            const match = normalizedQuestion.match(pattern);
+            if (match && match[1]) {
+                const keyword = match[1].trim();
+                // 過濾掉無意義的詞和群組相關詞
+                const invalidWords = ['什麼', '甚麼', '啥', '哪個', '那個', '哪个', '那个', '群組', '群组', '群'];
+                if (keyword && keyword.length > 0 && !invalidWords.includes(keyword)) {
+                    extractedKeywords.push(keyword);
+                    console.log(`🎯 提取關鍵詞: ${keyword}`);
+                    break;  // 找到一個關鍵詞就停止
+                }
+            }
+        }
+        
+        // 如果提取到關鍵詞且是群組查詢，使用關鍵詞直接查詢
+        if (extractedKeywords.length > 0 && isGroupQuery) {
+            console.log(`📊 使用提取的關鍵詞進行直接查詢: ${extractedKeywords.join(', ')}`);
+            return await queryGroupsByKeyword(question, extractedKeywords, sessionId);
         }
         
         // 步驟 1: 生成查詢的 embedding
         const queryEmbedding = await jinaGenerateEmbedding(question);
         
         // 步驟 2: 在數據庫中進行向量相似度搜索
+        console.log(`🔍 執行向量搜索... (sessionId: ${sessionId || 'all'})`);
+        
         const { data: similarDocs, error } = await supabase.rpc('match_documents', {
             query_embedding: queryEmbedding,
-            match_threshold: 0.1, // 降低閾值，接受更多結果
-            match_count: 10, // 增加返回數量
-            filter_session_id: sessionId
+            match_threshold: 0.05, // 🔧 進一步降低閾值，從 0.1 → 0.05
+            match_count: 20, // 🔧 增加返回數量，從 10 → 20
+            filter_session_id: null  // 🔧 移除 session 過濾，搜索所有數據
         });
         
         if (error) {
-            console.error('向量搜索錯誤:', error);
+            console.error('❌ 向量搜索錯誤:', error);
             // 如果向量搜索失敗，回退到關鍵詞搜索
             return await ragQueryFallback(question, sessionId);
         }
         
+        console.log(`📊 向量搜索結果: ${similarDocs ? similarDocs.length : 0} 個文檔`);
+        
         if (!similarDocs || similarDocs.length === 0) {
-            throw new Error('未找到相關文檔');
+            console.warn('⚠️ 向量搜索未找到結果，嘗試關鍵詞降級搜索...');
+            // 🔧 改進：不直接拋出錯誤，而是嘗試降級搜索
+            return await ragQueryFallback(question, sessionId);
         }
         
         console.log(`📚 找到 ${similarDocs.length} 個相關文檔`);
@@ -434,7 +479,9 @@ async function queryGroupsByKeyword(question, keywords, sessionId = null) {
         
         const topGroups = sortedGroups.slice(0, 10);
         
-        let answer = `📊 在 ${messages.length} 條消息中找到 ${sortedGroups.length} 個群組包含 "${keywords.join(' 或 ')}"。\n\n`;
+        // 🎯 在答案开头简短提示用户的问题，但不覆盖问题本身
+        let answer = `💡 搜索结果 (关键词: "${keywords.join(' 或 ')}")\n\n`;
+        answer += `📊 在 ${messages.length} 條消息中找到 ${sortedGroups.length} 個群組。\n\n`;
         answer += `🏆 討論最多的群組排名：\n\n`;
         
         topGroups.forEach((group, index) => {
@@ -472,30 +519,49 @@ async function queryGroupsByKeyword(question, keywords, sessionId = null) {
 async function ragQueryFallback(question, sessionId = null) {
     console.log('📝 使用關鍵詞搜索回退...');
     
-    let query = supabase
-        .from('rag_knowledge')
-        .select('*')
-        .textSearch('content', question, {
-            type: 'websearch',
-            config: 'chinese'
-        })
-        .limit(5);
-    
-    if (sessionId) {
-        query = query.eq('session_id', sessionId);
-    }
-    
-    const { data: docs, error } = await query;
-    
-    if (error || !docs || docs.length === 0) {
-        throw new Error('未找到相關文檔');
-    }
-    
-    console.log(`📚 關鍵詞搜索找到 ${docs.length} 個相關文檔`);
-    
-    // 使用 Jina Rerank 重新排序
-    const contents = docs.map(d => d.content);
-    const rankedResults = await jinaRerank(question, contents, 3);
+    try {
+        // 🔧 先檢查數據庫中是否有任何數據
+        const { count, error: countError } = await supabase
+            .from('rag_knowledge')
+            .select('*', { count: 'exact', head: true });
+        
+        if (countError) {
+            console.error('❌ 檢查數據庫失敗:', countError);
+        } else {
+            console.log(`📊 數據庫中共有 ${count} 條記錄`);
+        }
+        
+        let query = supabase
+            .from('rag_knowledge')
+            .select('*')
+            .textSearch('content', question, {
+                type: 'websearch',
+                config: 'chinese'
+            })
+            .limit(5);
+        
+        // 🔧 移除 session ID 過濾，搜索所有數據
+        // if (sessionId) {
+        //     query = query.eq('session_id', sessionId);
+        // }
+        
+        const { data: docs, error } = await query;
+        
+        if (error) {
+            console.error('❌ 關鍵詞搜索失敗:', error);
+            throw new Error(`關鍵詞搜索錯誤: ${error.message}`);
+        }
+        
+        if (!docs || docs.length === 0) {
+            console.warn('⚠️ 關鍵詞搜索未找到結果');
+            throw new Error('RAG 數據庫中未找到相關信息。請先在 Web 界面點擊「建立 RAG 索引」按鈕，將聊天記錄導入數據庫。');
+        }
+        
+        console.log(`📚 關鍵詞搜索找到 ${docs.length} 個相關文檔`);
+        
+        // 使用 Jina Rerank 重新排序
+        const contents = docs.map(d => d.content);
+        const rankedResults = await jinaRerank(question, contents, 3);
     
     // 後續處理與原 ragQuery 類似...
     const MAX_CONTEXT_LENGTH = 2000;
@@ -731,6 +797,26 @@ const RECONNECT_CONFIG = {
 // Middleware - Increase JSON payload limit for large chat history
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// 🆕 全局请求日志（用于调试）
+app.use((req, res, next) => {
+    if (req.path.includes('/api/llm')) {
+        console.log(`📥 ${req.method} ${req.path} - Body:`, JSON.stringify(req.body).substring(0, 100));
+    }
+    next();
+});
+
+// 🆕 禁用 HTML 文件缓存（强制浏览器每次都获取最新版本）
+app.use((req, res, next) => {
+    if (req.path === '/' || req.path.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Surrogate-Control', 'no-store');
+    }
+    next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Redirect legacy login page to root
@@ -1695,13 +1781,18 @@ async function startSession(sessionId) {
 
                 // Update contact's updated_at timestamp based on latest message
                 // This ensures sorting works
+                // 🔧 同时保存 pushName 作为 notify 字段（仅限对方发送的消息）
                 const contactsToUpdate = new Map();
                 validMessages.forEach(m => {
                     if (m.remote_jid && !m.remote_jid.includes('status@broadcast')) {
-                        // Keep track of the latest timestamp for each contact
+                        // Keep track of the latest timestamp and pushName for each contact
                         const existing = contactsToUpdate.get(m.remote_jid);
-                        if (!existing || new Date(m.message_timestamp) > new Date(existing)) {
-                            contactsToUpdate.set(m.remote_jid, m.message_timestamp);
+                        if (!existing || new Date(m.message_timestamp) > new Date(existing.timestamp)) {
+                            contactsToUpdate.set(m.remote_jid, {
+                                timestamp: m.message_timestamp,
+                                // 🔧 只在对方发送消息时保存 pushName，避免自己回复时覆盖对方名字
+                                pushName: (!m.from_me && m.push_name) ? m.push_name : null
+                            });
                         }
                     }
                 });
@@ -1710,23 +1801,40 @@ async function startSession(sessionId) {
                     // Update cache first
                     const cache = contactCache.get(sessionId);
                     if (cache) {
-                        contactsToUpdate.forEach((ts, jid) => {
+                        contactsToUpdate.forEach((data, jid) => {
                             const existing = cache.get(jid) || {};
-                            cache.set(jid, { ...existing, id: jid, updated_at: ts });
+                            const updated = { 
+                                ...existing, 
+                                id: jid, 
+                                updated_at: data.timestamp
+                            };
+                            // 只有当有 pushName 时才更新，避免覆盖已有的名字
+                            if (data.pushName) {
+                                updated.notify = data.pushName;
+                                updated.name = updated.name || data.pushName;
+                            }
+                            cache.set(jid, updated);
                         });
                     }
 
-                    const updates = Array.from(contactsToUpdate.entries()).map(([jid, ts]) => ({
-                        session_id: sessionId,
-                        jid: jid,
-                        updated_at: ts
-                    }));
+                    const updates = Array.from(contactsToUpdate.entries()).map(([jid, data]) => {
+                        const update = {
+                            session_id: sessionId,
+                            jid: jid,
+                            updated_at: data.timestamp
+                        };
+                        // 只有当有 pushName 时才更新 notify 字段
+                        if (data.pushName) {
+                            update.notify = data.pushName;
+                        }
+                        return update;
+                    });
                     
                     await supabase.from('whatsapp_contacts')
                         .upsert(updates, { onConflict: 'session_id,jid', ignoreDuplicates: false }); // We want to update timestamps
                     
                     // 🔧 自动发现 LID 映射关系
-                    contactsToUpdate.forEach((ts, jid) => {
+                    contactsToUpdate.forEach((data, jid) => {
                         if (jid && jid.endsWith('@lid')) {
                             // 异步调用，不阻塞主流程
                             autoDiscoverLidMapping(sessionId, jid, sock).catch(err => {
@@ -1834,6 +1942,233 @@ async function startSession(sessionId) {
             if (!error) {
                 const withNames = Array.from(senders.values()).filter(s => s.name).length;
                 console.log(`[${sessionId}] ✅ 更新了 ${senders.size} 个联系人（其中 ${withNames} 个有名字）`);
+            }
+        }
+        
+        // 🤖 自動回覆功能: 當用戶（自己）發送消息時，自動調用 Gemini 並回覆
+        // 只處理新消息（notify），不處理歷史消息（append）
+        if (type === 'notify') {
+            console.log(`🤖 [${sessionId}] 收到 ${messages.length} 条 notify 消息，开始检查是否需要自动回复...`);
+            
+            for (const msg of messages) {
+                console.log(`🤖 [${sessionId}] 检查消息: fromMe=${msg.key.fromMe}, remoteJid=${msg.key.remoteJid}`);
+                
+                // 🔧 修改: 只處理自己發送的消息（fromMe=true）
+                // 並且是發送到自己的消息（Note to Self）：可能是 @lid 或 @s.whatsapp.net 格式
+                if (msg.key.fromMe && msg.key.remoteJid) {
+                    const isNoteToSelf = msg.key.remoteJid.endsWith('@lid') || 
+                                        msg.key.remoteJid.endsWith('@s.whatsapp.net');
+                    const isGroup = msg.key.remoteJid.endsWith('@g.us');
+                    const isBroadcast = msg.key.remoteJid === 'status@broadcast';
+                    
+                    console.log(`🤖 [${sessionId}] 消息类型检查: isNoteToSelf=${isNoteToSelf}, isGroup=${isGroup}, isBroadcast=${isBroadcast}`);
+                    
+                    // 只处理 Note to Self 的消息，跳过群组和广播
+                    if (isNoteToSelf && !isGroup && !isBroadcast) {
+                        console.log(`🤖 [${sessionId}] ✅ 这是发送到 Note to Self 的消息，准备自动回复...`);
+                        
+                        // 提取消息文本
+                        const realMessage = unwrapMessage(msg.message);
+                        if (!realMessage) continue;
+                    
+                        let messageText = '';
+                        if (realMessage.conversation) {
+                            messageText = realMessage.conversation;
+                        } else if (realMessage.extendedTextMessage?.text) {
+                            messageText = realMessage.extendedTextMessage.text;
+                        }
+                        
+                        // 如果有文本消息，調用 Gemini 並回覆
+                        if (messageText && messageText.trim()) {
+                            console.log(`🤖 [${sessionId}] 收到消息來自 ${msg.key.remoteJid}: "${messageText}"`);
+                            
+                            // 異步處理，不阻塞消息保存
+                            (async () => {
+                                try {
+                                    console.log(`🤖 [${sessionId}] 收到用戶消息: "${messageText}"`);
+                                    
+                                    // 🔍 檢測是否需要使用 RAG 查詢數據庫
+                                    const needsRAG = /[群羣][組组]|[群羣]|聊天|消息|訊息|contact|group|message|帆船|sailing|討論|讨论|提及|說過|说过|發過|发过|花|講|请问|請問|哪个|哪個|最近/.test(messageText);
+                                    console.log(`🎯 [${sessionId}] needsRAG = ${needsRAG}, message = "${messageText}"`);
+                                    
+                                    let reply = '';
+                                    let usedRAG = false;
+                                    
+                                    // 如果需要 RAG，先嘗試從數據庫查詢
+                                    if (needsRAG) {
+                                        try {
+                                            console.log(`🔍 [${sessionId}] 檢測到數據查詢請求，使用 RAG 搜索...`);
+                                            const ragResult = await ragQueryWithDB(messageText, sessionId);
+                                            
+                                            if (ragResult && ragResult.answer) {
+                                                console.log(`✅ [${sessionId}] RAG 返回答案: "${ragResult.answer.substring(0, 100)}..."`);
+                                                reply = ragResult.answer;
+                                                usedRAG = true;
+                                                
+                                                // 如果有來源，添加到回覆中
+                                                if (ragResult.sources && ragResult.sources.length > 0) {
+                                                    reply += '\n\n📚 來源:\n';
+                                                    ragResult.sources.forEach((source, idx) => {
+                                                        reply += `${idx + 1}. ${source}\n`;
+                                                    });
+                                                }
+                                            }
+                                        } catch (ragError) {
+                                            console.warn(`⚠️ [${sessionId}] RAG 查詢失敗:`, ragError.message);
+                                            
+                                            // 如果是"未找到相關文檔"錯誤，給出提示
+                                            if (ragError.message.includes('未找到相關文檔')) {
+                                                reply = `⚠️ RAG 數據庫中未找到相關信息。\n\n💡 提示：\n1. 請先在 Web 界面構建 RAG 索引（點擊"建立 RAG 索引"按鈕）\n2. 或者使用網頁搜索來回答您的問題\n\n正在為您使用網頁搜索...`;
+                                                
+                                                // 發送提示消息
+                                                await sock.sendMessage(msg.key.remoteJid, { text: reply });
+                                                
+                                                // 廣播提示到 AI 助手欄
+                                                if (global.broadcastMessage) {
+                                                    global.broadcastMessage(sessionId, 'ai-assistant', {
+                                                        content: messageText,
+                                                        from_me: true,
+                                                        timestamp: Date.now() / 1000,
+                                                        message_type: 'user'
+                                                    });
+                                                    global.broadcastMessage(sessionId, 'ai-assistant', {
+                                                        content: reply,
+                                                        from_me: false,
+                                                        timestamp: Date.now() / 1000,
+                                                        message_type: 'assistant'
+                                                    });
+                                                }
+                                                
+                                                // 繼續使用網頁搜索
+                                                reply = '';
+                                            }
+                                        }
+                                    }
+                                    
+                                    // 如果 RAG 沒有返回答案，則使用 Serper + Gemini
+                                    if (!usedRAG) {
+                                        // 步驟 1: 使用 Serper.dev 進行網頁搜索
+                                        console.log(`🔍 [${sessionId}] 正在使用 Serper.dev 搜索網頁...`);
+                                        let searchResults = '';
+                                        
+                                        try {
+                                            const serperResponse = await fetch(SERPER_API_URL, {
+                                                method: 'POST',
+                                                headers: {
+                                                    'X-API-KEY': SERPER_API_KEY,
+                                                    'Content-Type': 'application/json'
+                                                },
+                                                body: JSON.stringify({
+                                                    q: messageText,
+                                                    num: 5  // 获取前5个搜索结果
+                                                })
+                                            });
+                                            
+                                            if (serperResponse.ok) {
+                                                const serperData = await serperResponse.json();
+                                                console.log(`✅ [${sessionId}] Serper 搜索成功，獲得 ${serperData.organic?.length || 0} 個結果`);
+                                                
+                                                // 格式化搜索结果
+                                                if (serperData.organic && serperData.organic.length > 0) {
+                                                    searchResults = '\n\n【網頁搜索結果】\n';
+                                                    serperData.organic.forEach((result, index) => {
+                                                        searchResults += `${index + 1}. ${result.title}\n`;
+                                                        searchResults += `   ${result.snippet}\n`;
+                                                        searchResults += `   來源: ${result.link}\n\n`;
+                                                    });
+                                                }
+                                            } else {
+                                                console.warn(`⚠️ [${sessionId}] Serper 搜索失敗: ${serperResponse.status}`);
+                                            }
+                                        } catch (searchError) {
+                                            console.error(`❌ [${sessionId}] Serper 搜索錯誤:`, searchError.message);
+                                        }
+                                        
+                                        // 步驟 2: 調用 Gemini API，結合搜索結果
+                                        console.log(`🤖 [${sessionId}] 正在調用 Gemini API...`);
+                                        
+                                        // 構建提示詞，包含搜索結果
+                                        const promptWithSearch = searchResults 
+                                            ? `請根據以下網頁搜索結果回答用戶問題。
+
+重要要求：
+1. 必須完整列出全部5條搜索結果，一條都不能省略
+2. 每條新聞都要包含：標題、詳細摘要、來源鏈接
+3. 請使用清晰的編號（1. 2. 3. 4. 5.）
+4. 確保第5條新聞的內容完整，不要被截斷
+
+用戶問題：${messageText}${searchResults}`
+                                            : messageText;
+                                        
+                                        const geminiResponse = await fetch(OPENROUTER_API_URL, {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json',
+                                                'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                                                'HTTP-Referer': 'https://whatsapp-crm.techforliving.app',
+                                                'X-Title': 'WhatsApp CRM Auto Reply'
+                                            },
+                                            body: JSON.stringify({
+                                                model: 'google/gemini-2.5-pro',
+                                                messages: [
+                                                    { role: 'user', content: promptWithSearch }
+                                                ],
+                                                temperature: 0.7,
+                                                max_tokens: 4000  // 增加到4000確保能容納完整的5條新聞
+                                            })
+                                        });
+                                        
+                                        console.log(`🤖 [${sessionId}] API 回應狀態: ${geminiResponse.status}`);
+                                        
+                                        if (!geminiResponse.ok) {
+                                            const errorText = await geminiResponse.text();
+                                            console.error(`❌ [${sessionId}] Gemini API 錯誤:`, geminiResponse.status, errorText);
+                                            return;
+                                        }
+                                        
+                                        const geminiData = await geminiResponse.json();
+                                        console.log(`🔍 [${sessionId}] Gemini 完整響應:`, JSON.stringify(geminiData, null, 2));
+                                        
+                                        reply = geminiData.choices?.[0]?.message?.content;
+                                    }
+                                    
+                                    if (reply && reply.trim()) {
+                                        console.log(`✅ [${sessionId}] ${usedRAG ? 'RAG' : 'Gemini'} 回覆: "${reply.substring(0, 100)}..."`);
+                                        
+                                        // 發送回覆
+                                        await sock.sendMessage(msg.key.remoteJid, { text: reply });
+                                        console.log(`📤 [${sessionId}] 已發送自動回覆到 ${msg.key.remoteJid}`);
+                                        
+                                        // 📢 廣播用戶消息到 AI 助手欄
+                                        if (global.broadcastMessage) {
+                                            console.log(`📢 [${sessionId}] 廣播用戶消息到 AI 助手欄`);
+                                            global.broadcastMessage(sessionId, 'ai-assistant', {
+                                                content: messageText,
+                                                from_me: true,
+                                                timestamp: Date.now() / 1000,
+                                                message_type: 'user'
+                                            });
+                                            
+                                            // 📢 廣播回覆到 AI 助手欄
+                                            console.log(`📢 [${sessionId}] 廣播${usedRAG ? 'RAG' : 'Gemini'}回覆到 AI 助手欄`);
+                                            global.broadcastMessage(sessionId, 'ai-assistant', {
+                                                content: reply,
+                                                from_me: false,
+                                                timestamp: Date.now() / 1000,
+                                                message_type: 'assistant'
+                                            });
+                                        }
+                                    } else {
+                                        console.warn(`⚠️ [${sessionId}] 沒有返回回覆內容`);
+                                    }
+                                } catch (error) {
+                                    console.error(`❌ [${sessionId}] 自動回覆失敗:`, error.message);
+                                    console.error(`❌ [${sessionId}] 錯誤堆棧:`, error.stack);
+                                }
+                            })();
+                        }
+                    }
+                }
             }
         }
     });
@@ -3237,10 +3572,18 @@ app.get('/api/session/:id/avatar/:jid', async (req, res) => {
     const sessionId = req.params.id;
     const jid = req.params.jid;
     
+    console.log(`[API] 📸 请求头像: session=${sessionId}, jid=${jid}`);
+    
     try {
         const session = sessions.get(sessionId);
-        if (!session || !session.sock) {
-            return res.status(404).json({ error: 'Session not found or not connected' });
+        if (!session) {
+            console.log(`[API] ❌ 会话不存在: ${sessionId}`);
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        if (!session.sock) {
+            console.log(`[API] ❌ 会话未连接: ${sessionId}`);
+            return res.status(404).json({ error: 'Session not connected' });
         }
         
         try {
@@ -3248,16 +3591,18 @@ app.get('/api/session/:id/avatar/:jid', async (req, res) => {
             const ppUrl = await session.sock.profilePictureUrl(jid, 'image');
             
             if (ppUrl) {
+                console.log(`[API] ✅ 头像获取成功: ${jid}`);
                 // Return the URL directly
                 res.json({ success: true, url: ppUrl });
             } else {
+                console.log(`[API] ℹ️ 头像不存在: ${jid}`);
                 // No profile picture available
                 res.json({ success: false, url: null });
             }
         } catch (ppError) {
             // Profile picture not available (privacy settings or doesn't exist)
-            console.log(`[API] ℹ️ 联系人 ${jid} 没有头像或隐私设置不可见`);
-            res.json({ success: false, url: null });
+            console.log(`[API] ℹ️ 联系人 ${jid} 没有头像或隐私设置不可见:`, ppError.message);
+            res.json({ success: false, url: null, error: ppError.message });
         }
     } catch (e) {
         console.error(`[API] ❌ 获取头像失败:`, e);
@@ -5541,10 +5886,14 @@ app.post('/api/crm/messages/:messageId/revoke', checkCaseyCRMToken, async (req, 
 // ====== LLM Assistant API (Google Gemini 3 Pro via Open Router) ======
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'your-openrouter-api-key-here';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const SERPER_API_KEY = '6f43b765ef6bf6b85c6de7181957c23eccdf170e';
+const SERPER_API_URL = 'https://google.serper.dev/search';
 
 app.post('/api/llm/chat', async (req, res) => {
     try {
         const { message, history = [], sessionId } = req.body;
+        
+        console.log(`💬 收到 LLM 聊天請求: "${message}"`);
         
         if (!message) {
             return res.status(400).json({ success: false, error: '訊息不能為空' });
@@ -5555,7 +5904,10 @@ app.post('/api/llm/chat', async (req, res) => {
         let ragSources = [];
         
         // 檢測是否需要查詢數據庫（關鍵詞觸發）
-        const needsRAG = /群組|群|聊天|消息|訊息|contact|group|message|帆船|sailing|討論|提及|說過|發過/.test(message);
+        // 注意: 支持繁体字的不同写法 (群/羣, 组/組)
+        const needsRAG = /[群羣][組组]|[群羣]|聊天|消息|訊息|contact|group|message|帆船|sailing|討論|讨论|提及|說過|说过|發過|发过|花|講|请问|請問|哪个|哪個|最近/.test(message);
+        
+        console.log(`🎯 needsRAG = ${needsRAG}, message = "${message}"`);
         
         if (needsRAG) {
             try {

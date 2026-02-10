@@ -164,7 +164,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.81</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.82</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -795,6 +795,13 @@
                             <h3 class="font-bold text-sm">AI 助手</h3>
                         </div>
                         <div class="flex items-center gap-1">
+                        <!-- 新對話按鈕 (顯眼的主按鈕) -->
+                        <button onclick="startNewLLMConversation()" class="flex items-center gap-1 px-2.5 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg transition font-medium text-xs" title="開始新對話">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                            </svg>
+                            <span>新對話</span>
+                        </button>
                         <button onclick="showAnalysisHistory()" class="p-1.5 hover:bg-white/20 rounded transition" title="查看分析歷史">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -1606,7 +1613,10 @@
         
         // 获取头像 URL（优化：按需加载，使用 Intersection Observer）
         async function getAvatarUrl(jid) {
-            if (!currentSessionId) return null;
+            if (!currentSessionId) {
+                console.warn(`⚠️ 无法获取头像：Session ID 未设置`);
+                return null;
+            }
             
             // 检查缓存
             if (avatarCache.has(jid)) {
@@ -1614,14 +1624,28 @@
             }
             
             try {
+                console.log(`🔄 正在获取头像: ${jid}`);
                 const res = await fetch(`/api/session/${currentSessionId}/avatar/${encodeURIComponent(jid)}`);
+                
+                if (!res.ok) {
+                    console.warn(`⚠️ 头像 API 返回错误状态: ${res.status}`);
+                    avatarCache.set(jid, null);
+                    return null;
+                }
+                
                 const data = await res.json();
                 
-                const url = data.success ? data.url : null;
-                avatarCache.set(jid, url); // 缓存结果（包括 null）
-                return url;
+                if (data.success && data.url) {
+                    console.log(`✅ 头像获取成功: ${jid}`);
+                    avatarCache.set(jid, data.url);
+                    return data.url;
+                } else {
+                    console.log(`ℹ️ 头像不可用: ${jid}`, data.error || '隐私设置或未设置头像');
+                    avatarCache.set(jid, null);
+                    return null;
+                }
             } catch (e) {
-                console.error('获取头像失败:', e);
+                console.error('❌ 获取头像失败:', jid, e);
                 avatarCache.set(jid, null);
                 return null;
             }
@@ -1630,8 +1654,28 @@
         // Intersection Observer - 只加载可见区域的头像
         let avatarObserver = null;
         
+        // 加载单个头像的辅助函数
+        async function loadAvatar(element, jid) {
+            if (!element || !jid) return;
+            
+            try {
+                const url = await getAvatarUrl(jid);
+                if (url && element) {
+                    const name = element.dataset.name || '?';
+                    console.log(`🖼️ 设置头像图片: ${jid}`);
+                    element.innerHTML = `<img src="${url}" class="w-full h-full object-cover" alt="${name}" onerror="this.style.display='none'; this.parentElement.innerHTML='${name[0]?.toUpperCase() || '?'}'">`;
+                } else {
+                    console.log(`⚪ 无头像，保持首字母显示: ${jid}`);
+                }
+            } catch (err) {
+                console.error(`❌ 头像加载异常: ${jid}`, err);
+            }
+        }
+        
         function initAvatarObserver() {
             if (avatarObserver) avatarObserver.disconnect();
+            
+            console.log('🔧 初始化 Intersection Observer...');
             
             avatarObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
@@ -1639,20 +1683,19 @@
                         const jid = entry.target.dataset.jid;
                         entry.target.dataset.loaded = 'true';
                         
+                        console.log(`👁️ 头像进入可见区域，开始加载: ${jid}`);
+                        
                         // 加载头像
-                        getAvatarUrl(jid).then(url => {
-                            if (url && entry.target) {
-                                const name = entry.target.dataset.name || '?';
-                                entry.target.innerHTML = `<img src="${url}" class="w-full h-full object-cover" alt="${name}" onerror="this.parentElement.innerHTML='${name[0]?.toUpperCase() || '?'}'">`;
-                            }
-                        });
+                        loadAvatar(entry.target, jid);
                     }
                 });
             }, {
                 root: document.getElementById('contacts-list'),
-                rootMargin: '100px', // 提前 100px 加载
+                rootMargin: '200px', // 提前 200px 加载
                 threshold: 0.01
             });
+            
+            console.log('✅ Intersection Observer 已初始化');
         }
         
         function renderContactsList(contacts) {
@@ -1758,8 +1801,10 @@
             // 🆕 使用 Intersection Observer 按需加载头像（只加载可见区域）
             initAvatarObserver();
             
-            // 观察所有头像元素
-            contacts.forEach(c => {
+            // 观察所有头像元素，并立即加载前10个
+            let observedCount = 0;
+            let immediateLoadCount = 0;
+            contacts.forEach((c, index) => {
                 const id = c.jid || c.id;
                 if (!id) return;
                 
@@ -1767,8 +1812,23 @@
                 const avatarEl = document.getElementById(avatarId);
                 if (avatarEl && avatarObserver) {
                     avatarObserver.observe(avatarEl);
+                    observedCount++;
+                    
+                    // 🔧 立即加载前10个头像（无需等待 Intersection Observer）
+                    if (index < 10) {
+                        setTimeout(() => {
+                            if (!avatarEl.dataset.loaded) {
+                                avatarEl.dataset.loaded = 'true';
+                                loadAvatar(avatarEl, id);
+                                immediateLoadCount++;
+                            }
+                        }, index * 100); // 错开加载时间避免并发过多
+                    }
                 }
             });
+            
+            console.log(`👁️ 已注册 ${observedCount} 个头像元素到 Intersection Observer`);
+            console.log(`⚡ 立即加载前 ${Math.min(10, contacts.length)} 个头像`);
         }
 
         async function loadChat(jid, name) {
@@ -2318,6 +2378,29 @@
                     }
                     
                     if (data.type === 'new_message') {
+                        // 🤖 特殊处理：AI 助手消息
+                        if (data.chatId === 'ai-assistant') {
+                            console.log('🤖 收到 AI 助手消息:', data.message);
+                            
+                            const role = data.message.message_type === 'user' ? 'user' : 'model';
+                            const content = data.message.content;
+                            
+                            // 添加到 UI
+                            addLLMMessageToUI(role, content, false, false);
+                            
+                            // 添加到历史记录
+                            llmChatHistory.push({
+                                role: role,
+                                parts: [{ text: content }]
+                            });
+                            
+                            // 保存历史记录
+                            saveLLMHistory();
+                            
+                            console.log(`✅ AI 助手消息已添加: role=${role}, 历史记录数=${llmChatHistory.length}`);
+                            return;
+                        }
+                        
                         const isGroup = data.isGroup || (data.chatId && data.chatId.endsWith('@g.us'));
                         const messageType = isGroup ? '群组消息' : '私聊消息';
                         const sender = data.message?.push_name || '未知';
@@ -3133,7 +3216,9 @@
             const hasImage = currentEditingImage !== null;
             
             // Add user message to UI
-            addLLMMessageToUI('user', message);
+            console.log('🟢 准备添加用户消息到 UI:', message);
+            const userMsgId = addLLMMessageToUI('user', message);
+            console.log('✅ 用户消息已添加，ID:', userMsgId);
             input.value = '';
             
             // 发送消息后暂时隐藏标签，但不清除 currentCommandModel
@@ -3147,6 +3232,9 @@
             
             // Add to history
             llmChatHistory.push({ role: 'user', parts: [{ text: message }] });
+            
+            // 🆕 立即保存用户消息到历史记录，防止刷新时丢失
+            saveLLMHistory();
             
             try {
                 // Show loading
@@ -3212,14 +3300,23 @@
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ 
                                 message,
-                                history: llmChatHistory.slice(0, -1)
+                                history: llmChatHistory.slice(0, -1),
+                                sessionId: currentSessionId  // 🆕 添加 sessionId
                             })
                         });
                     }
                 }
                 
                 // Remove loading message first
-                document.getElementById(loadingId)?.remove();
+                console.log('🗑️ 准备移除加载消息，loadingId:', loadingId);
+                const loadingElement = document.getElementById(loadingId);
+                console.log('🔍 找到的加载元素:', loadingElement);
+                if (loadingElement) {
+                    loadingElement.remove();
+                    console.log('✅ 加载消息已移除');
+                } else {
+                    console.warn('⚠️ 未找到加载消息元素!');
+                }
                 
                 // Check if response is JSON
                 const contentType = response.headers.get('content-type');
@@ -3301,6 +3398,20 @@
                     
                     // 💾 保存历史记录
                     saveLLMHistory();
+                    
+                    // 🆕 如果是 RAG 查詢(有 sources 或 method)，保存到分析歷史
+                    if (data.method && (data.method === 'rag_enhanced' || data.method === 'direct_query' || data.method === 'vector_search')) {
+                        console.log('📊 檢測到 RAG 查詢，保存到分析歷史...');
+                        saveAnalysisToHistory({
+                            timestamp: Date.now(),
+                            query: message,
+                            result: data.reply,
+                            method: data.method,
+                            sources: data.sources || [],
+                            model: data.model || 'Gemini 3 Pro',
+                            type: 'rag_query' // 標記類型
+                        });
+                    }
                 } else {
                     addLLMMessageToUI('assistant', '錯誤: ' + (data.error || '無法獲取回應'));
                 }
@@ -3359,7 +3470,10 @@
 
         function addLLMMessageToUI(role, content, isHTML = false, noScroll = false) {
             const container = document.getElementById('llm-chat-container');
-            const messageId = 'llm-msg-' + Date.now();
+            // 🔧 使用更精确的 ID 生成策略,避免冲突
+            const messageId = 'llm-msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            
+            console.log(`📝 添加消息到 UI: role=${role}, id=${messageId}, content=${content.substring(0, 50)}...`);
             
             const messageDiv = document.createElement('div');
             messageDiv.id = messageId;
@@ -3382,10 +3496,15 @@
             messageDiv.appendChild(bubble);
             container.appendChild(messageDiv);
             
+            console.log(`✅ 消息已添加到容器，ID=${messageId}, 容器当前子元素数量: ${container.children.length}`);
+            
             // 🔧 只在不是加载历史记录时才滚动
             if (!noScroll) {
-                // 移除自動滾動，讓用戶可以查看歷史記錄
-                // container.scrollTop = container.scrollHeight;
+                // 平滑滚动到底部
+                container.scrollTo({
+                    top: container.scrollHeight,
+                    behavior: role === 'user' ? 'auto' : 'smooth'
+                });
             }
             
             return messageId;
@@ -4018,20 +4137,53 @@
         }
 
         function clearLLMChat() {
-            if (confirm('確定要清空對話記錄嗎？')) {
+            // 提供三个选项：全部清空、保留最近10条、取消
+            const choice = confirm('🗑️ 清空對話記錄\n\n點擊「確定」= 全部清空\n點擊「取消」= 保留對話\n\n💡 提示：歷史記錄會自動保存，下次打開時恢復。');
+            
+            if (choice) {
+                // 用户选择全部清空
                 llmChatHistory = [];
                 document.getElementById('llm-chat-container').innerHTML = '';
                 addLLMMessageToUI('assistant', '您好！我是 Gemini 3 助手，有什麼可以幫您的嗎？');
                 
                 // 💾 清空 localStorage
                 localStorage.removeItem(LLM_HISTORY_KEY);
-                console.log('🗑️ 已清空 Gemini 历史记录');
+                console.log('🗑️ 已清空所有 Gemini 历史记录');
                 
                 // 清除图片编辑状态和模型标签
                 currentEditingImage = null;
                 clearModelIndicator();
             }
+            // 如果用户点击"取消"，则不做任何操作，保留对话
         }
+
+        // 🆕 開始新對話 (無需確認，直接清空並開始)
+        function startNewLLMConversation() {
+            // 直接清空，無需確認
+            llmChatHistory = [];
+            document.getElementById('llm-chat-container').innerHTML = '';
+            
+            // 顯示歡迎消息
+            addLLMMessageToUI('assistant', '🎉 新對話已開始！\n\n您好！我是 Gemini 3 助手，有什麼可以幫您的嗎？\n\n💡 提示：現在可以提出全新的查詢，不會受到之前對話內容的影響。');
+            
+            // 💾 清空 localStorage
+            localStorage.removeItem(LLM_HISTORY_KEY);
+            console.log('✨ 已開始新對話，清空所有歷史記錄');
+            
+            // 清除图片编辑状态和模型标签
+            currentEditingImage = null;
+            clearModelIndicator();
+            
+            // 顯示通知
+            showNotification('✨ 已開始新對話！', 'success');
+            
+            // 聚焦到輸入框
+            const inputBox = document.getElementById('llm-chat-input');
+            if (inputBox) {
+                inputBox.focus();
+            }
+        }
+
 
         // ====== Image Generator Modal Functions ======
         function openImageGeneratorModal() {
@@ -4232,57 +4384,107 @@
             historyList.innerHTML = history.map(item => {
                 const date = new Date(item.timestamp);
                 const dateStr = date.toLocaleString('zh-HK');
-                const timeRangeText = getTimeRangeText(item.timeRange, item.startDate, item.endDate);
                 
-                return `
-                    <div class="bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-all">
-                        <div class="flex justify-between items-start mb-3">
-                            <div class="flex-1">
-                                <h3 class="font-bold text-lg text-gray-800 flex items-center gap-2">
-                                    <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-                                    ${item.contactName}
-                                </h3>
-                                <p class="text-xs text-gray-500 mt-1">${dateStr}</p>
+                // 🆕 判斷記錄類型
+                if (item.type === 'rag_query') {
+                    // RAG 查詢歷史
+                    const methodText = {
+                        'rag_enhanced': '🔍 RAG 增強查詢',
+                        'direct_query': '📊 直接查詢',
+                        'vector_search': '🎯 向量搜索'
+                    }[item.method] || '🤖 AI 查詢';
+                    
+                    return `
+                        <div class="bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-4 hover:shadow-lg transition-all">
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="flex-1">
+                                    <h3 class="font-bold text-lg text-gray-800 flex items-center gap-2">
+                                        <span class="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
+                                        ${methodText}
+                                    </h3>
+                                    <p class="text-xs text-gray-500 mt-1">${dateStr}</p>
+                                </div>
+                                <div class="flex gap-1">
+                                    <button onclick="viewAnalysis(${item.id})" class="p-2 hover:bg-blue-100 rounded-lg transition text-blue-600" title="查看詳情">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                        </svg>
+                                    </button>
+                                    <button onclick="deleteAnalysisFromHistory(${item.id})" class="p-2 hover:bg-red-100 rounded-lg transition text-red-600" title="刪除">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="flex gap-1">
-                                <button onclick="viewAnalysis(${item.id})" class="p-2 hover:bg-blue-100 rounded-lg transition text-blue-600" title="查看分析">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
-                                    </svg>
-                                </button>
-                                <button onclick="deleteAnalysisFromHistory(${item.id})" class="p-2 hover:bg-red-100 rounded-lg transition text-red-600" title="刪除">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                    </svg>
-                                </button>
+                            
+                            <div class="mb-3">
+                                <div class="bg-white px-3 py-2 rounded-lg border border-purple-200">
+                                    <span class="text-xs text-gray-600">查詢:</span>
+                                    <p class="font-medium text-gray-800 mt-1">${item.query}</p>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-white rounded-lg p-3 text-sm text-gray-700 max-h-32 overflow-y-auto border border-purple-100">
+                                ${item.result.substring(0, 200)}${item.result.length > 200 ? '...' : ''}
                             </div>
                         </div>
-                        
-                        <div class="grid grid-cols-2 gap-2 mb-3 text-xs">
-                            <div class="bg-blue-50 px-3 py-2 rounded-lg">
-                                <span class="text-gray-600">時間範圍:</span>
-                                <span class="font-medium text-blue-700 ml-1">${timeRangeText}</span>
+                    `;
+                } else {
+                    // 聯絡人分析歷史 (原有邏輯)
+                    const timeRangeText = getTimeRangeText(item.timeRange, item.startDate, item.endDate);
+                    
+                    return `
+                        <div class="bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-all">
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="flex-1">
+                                    <h3 class="font-bold text-lg text-gray-800 flex items-center gap-2">
+                                        <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                                        ${item.contactName}
+                                    </h3>
+                                    <p class="text-xs text-gray-500 mt-1">${dateStr}</p>
+                                </div>
+                                <div class="flex gap-1">
+                                    <button onclick="viewAnalysis(${item.id})" class="p-2 hover:bg-blue-100 rounded-lg transition text-blue-600" title="查看分析">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                        </svg>
+                                    </button>
+                                    <button onclick="deleteAnalysisFromHistory(${item.id})" class="p-2 hover:bg-red-100 rounded-lg transition text-red-600" title="刪除">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="bg-purple-50 px-3 py-2 rounded-lg">
-                                <span class="text-gray-600">成員:</span>
-                                <span class="font-medium text-purple-700 ml-1">${item.selectedMembers?.length || 0} 位</span>
+                            
+                            <div class="grid grid-cols-2 gap-2 mb-3 text-xs">
+                                <div class="bg-blue-50 px-3 py-2 rounded-lg">
+                                    <span class="text-gray-600">時間範圍:</span>
+                                    <span class="font-medium text-blue-700 ml-1">${timeRangeText}</span>
+                                </div>
+                                <div class="bg-purple-50 px-3 py-2 rounded-lg">
+                                    <span class="text-gray-600">成員:</span>
+                                    <span class="font-medium text-purple-700 ml-1">${item.selectedMembers?.length || 0} 位</span>
+                                </div>
+                                <div class="bg-green-50 px-3 py-2 rounded-lg">
+                                    <span class="text-gray-600">訊息:</span>
+                                    <span class="font-medium text-green-700 ml-1">${item.messageCount || 0} 條</span>
+                                </div>
+                                <div class="bg-amber-50 px-3 py-2 rounded-lg">
+                                    <span class="text-gray-600">媒體:</span>
+                                    <span class="font-medium text-amber-700 ml-1">${(item.photoCount || 0) + (item.videoCount || 0)} 個</span>
+                                </div>
                             </div>
-                            <div class="bg-green-50 px-3 py-2 rounded-lg">
-                                <span class="text-gray-600">訊息:</span>
-                                <span class="font-medium text-green-700 ml-1">${item.messageCount || 0} 條</span>
-                            </div>
-                            <div class="bg-amber-50 px-3 py-2 rounded-lg">
-                                <span class="text-gray-600">媒體:</span>
-                                <span class="font-medium text-amber-700 ml-1">${(item.photoCount || 0) + (item.videoCount || 0)} 個</span>
+                            
+                            <div class="bg-gray-100 rounded-lg p-3 text-sm text-gray-700 max-h-32 overflow-y-auto">
+                                ${item.analysis.substring(0, 200)}${item.analysis.length > 200 ? '...' : ''}
                             </div>
                         </div>
-                        
-                        <div class="bg-gray-100 rounded-lg p-3 text-sm text-gray-700 max-h-32 overflow-y-auto">
-                            ${item.analysis.substring(0, 200)}${item.analysis.length > 200 ? '...' : ''}
-                        </div>
-                    </div>
-                `;
+                    `;
+                }
             }).join('');
         }
         
@@ -4307,10 +4509,22 @@
                 toggleGeminiSidebar();
             }
             
-            // Display the full analysis
-            addLLMMessageToUI('assistant', `📊 歷史分析報告\n\n**聊天對象:** ${item.contactName}\n**分析時間:** ${new Date(item.timestamp).toLocaleString('zh-HK')}\n**時間範圍:** ${getTimeRangeText(item.timeRange, item.startDate, item.endDate)}\n\n${item.analysis}`);
+            // 🆕 根據記錄類型顯示不同的內容
+            if (item.type === 'rag_query') {
+                // RAG 查詢歷史
+                const methodText = {
+                    'rag_enhanced': '🔍 RAG 增強查詢',
+                    'direct_query': '📊 直接查詢',
+                    'vector_search': '🎯 向量搜索'
+                }[item.method] || '🤖 AI 查詢';
+                
+                addLLMMessageToUI('assistant', `${methodText}\n\n**查詢時間:** ${new Date(item.timestamp).toLocaleString('zh-HK')}\n**模型:** ${item.model}\n\n**您的查詢:**\n${item.query}\n\n**AI 回答:**\n${item.result}`);
+            } else {
+                // 聯絡人分析歷史（原有邏輯）
+                addLLMMessageToUI('assistant', `📊 歷史分析報告\n\n**聊天對象:** ${item.contactName}\n**分析時間:** ${new Date(item.timestamp).toLocaleString('zh-HK')}\n**時間範圍:** ${getTimeRangeText(item.timeRange, item.startDate, item.endDate)}\n\n${item.analysis}`);
+            }
             
-            showNotification('已加載歷史分析', 'success');
+            showNotification('已加載歷史記錄', 'success');
         }
         
         function getTimeRangeText(timeRange, startDate, endDate) {
@@ -4341,7 +4555,9 @@
             
             // 只在没有历史记录时显示欢迎消息
             if (llmChatHistory.length === 0) {
-                addLLMMessageToUI('assistant', '您好！我是 Gemini 3 助手，有什麼可以幫您的嗎？');
+                addLLMMessageToUI('assistant', '您好！我是 Gemini 3 助手，有什麼可以幫您的嗎？\n\n💡 您的對話記錄會自動保存，下次打開時恢復。');
+            } else {
+                console.log(`💾 已恢復 ${llmChatHistory.length} 條歷史對話記錄`);
             }
         });
 
