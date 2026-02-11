@@ -26,7 +26,7 @@ let globalWebhookUrl = null;
 // 格式: 群组 JID (以 @g.us 结尾)
 // 如何获取群组 JID: 在前端打开群组聊天，查看 URL 中的 JID
 const ALLOWED_WEBHOOK_GROUPS = [
-    // 'XXXXXXXXXX@g.us',  // Casey 与 Casey 的对话群组 (请替换为实际的群组 JID)
+    '120363148339809413@g.us',  // Casey哥 (Casey 与 Casey 的对话群组)
 ];
 
 // 检查是否允许该群组触发 webhook
