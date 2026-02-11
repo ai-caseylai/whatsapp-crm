@@ -22,6 +22,30 @@ const MASTER_KEY = process.env.BAILEYS_MASTER_KEY || 'testing';
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || 'webhook_secret';
 let globalWebhookUrl = null;
 
+// 🔧 群组过滤配置 - 只允许特定群组触发 webhook (AI 机器人回复)
+// 格式: 群组 JID (以 @g.us 结尾)
+// 如何获取群组 JID: 在前端打开群组聊天，查看 URL 中的 JID
+const ALLOWED_WEBHOOK_GROUPS = [
+    // 'XXXXXXXXXX@g.us',  // Casey 与 Casey 的对话群组 (请替换为实际的群组 JID)
+];
+
+// 检查是否允许该群组触发 webhook
+function isAllowedWebhookGroup(remoteJid) {
+    // 如果不是群组消息（私聊），默认不允许
+    if (!remoteJid || !remoteJid.endsWith('@g.us')) {
+        return false;
+    }
+    
+    // 如果允许列表为空，打印警告但允许所有群组（向后兼容）
+    if (ALLOWED_WEBHOOK_GROUPS.length === 0) {
+        console.log(`⚠️  警告: ALLOWED_WEBHOOK_GROUPS 为空，所有群组都会触发 webhook。请配置允许的群组 JID。`);
+        return true;
+    }
+    
+    // 检查是否在允许列表中
+    return ALLOWED_WEBHOOK_GROUPS.includes(remoteJid);
+}
+
 async function sendWebhook(event, data) {
     if (!globalWebhookUrl) return;
     try {
@@ -1010,9 +1034,22 @@ async function startSession(sessionId) {
                     await new Promise(resolve => setTimeout(resolve, 200));
                     
                     validMessages.forEach(m => {
-                        sendWebhook('message', { sessionId, message: m });
+                        // 🔧 群组过滤：只有允许的群组才触发 webhook (AI 机器人回复)
+                        const isGroupMessage = m.remote_jid && m.remote_jid.endsWith('@g.us');
+                        if (isGroupMessage) {
+                            if (isAllowedWebhookGroup(m.remote_jid)) {
+                                console.log(`[${sessionId}] ✅ 允许的群组消息，触发 webhook: ${m.remote_jid}`);
+                                sendWebhook('message', { sessionId, message: m });
+                            } else {
+                                console.log(`[${sessionId}] ⛔ 群组消息被过滤，不触发 webhook: ${m.remote_jid}`);
+                            }
+                        } else {
+                            // 私聊消息不触发 webhook (或者您可以根据需要调整)
+                            console.log(`[${sessionId}] 📝 私聊消息，不触发 webhook: ${m.remote_jid}`);
+                            // sendWebhook('message', { sessionId, message: m }); // 取消注释以允许私聊触发 webhook
+                        }
                         
-                        // Broadcast via WebSocket for real-time updates
+                        // Broadcast via WebSocket for real-time updates (前端显示，不受影响)
                         if (global.broadcastMessage) {
                             const hasMedia = m.attachment_path || ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(m.message_type);
                             console.log(`[${sessionId}] 📤 广播实时新消息到前端: ${m.remote_jid}${hasMedia ? ' (含媒体)' : ''}`);
