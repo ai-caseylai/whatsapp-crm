@@ -22,28 +22,36 @@ const MASTER_KEY = process.env.BAILEYS_MASTER_KEY || 'testing';
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || 'webhook_secret';
 let globalWebhookUrl = null;
 
-// 🔧 群组过滤配置 - 只允许特定群组触发 webhook (AI 机器人回复)
-// 格式: 群组 JID (以 @g.us 结尾)
-// 如何获取群组 JID: 在前端打开群组聊天，查看 URL 中的 JID
-const ALLOWED_WEBHOOK_GROUPS = [
-    '120363148339809413@g.us',  // Casey哥 (Casey 与 Casey 的对话群组)
+// 🔧 Webhook 过滤配置 - 只允许特定联系人/群组触发 webhook (AI 机器人回复)
+// 支持群组 (@g.us) 和私聊 (@s.whatsapp.net 或 @lid)
+const ALLOWED_WEBHOOK_CONTACTS = [
+    '210719786180760@lid',  // Casey 的私聊 (唯一允许的对话)
+    // '120363148339809413@g.us',  // Casey哥群组 (如需启用请取消注释)
 ];
 
-// 检查是否允许该群组触发 webhook
-function isAllowedWebhookGroup(remoteJid) {
-    // 如果不是群组消息（私聊），默认不允许
-    if (!remoteJid || !remoteJid.endsWith('@g.us')) {
+// 检查是否允许该联系人/群组触发 webhook
+function isAllowedWebhookContact(remoteJid) {
+    if (!remoteJid) {
         return false;
     }
     
-    // 如果允许列表为空，打印警告但允许所有群组（向后兼容）
-    if (ALLOWED_WEBHOOK_GROUPS.length === 0) {
-        console.log(`⚠️  警告: ALLOWED_WEBHOOK_GROUPS 为空，所有群组都会触发 webhook。请配置允许的群组 JID。`);
-        return true;
+    // 如果允许列表为空，打印警告
+    if (ALLOWED_WEBHOOK_CONTACTS.length === 0) {
+        console.log(`⚠️  警告: ALLOWED_WEBHOOK_CONTACTS 为空，没有任何对话会触发 webhook。`);
+        return false;
     }
     
     // 检查是否在允许列表中
-    return ALLOWED_WEBHOOK_GROUPS.includes(remoteJid);
+    const isAllowed = ALLOWED_WEBHOOK_CONTACTS.includes(remoteJid);
+    
+    if (isAllowed) {
+        console.log(`✅ 允许的联系人，触发 webhook: ${remoteJid}`);
+    } else {
+        const type = remoteJid.endsWith('@g.us') ? '群组' : '私聊';
+        console.log(`⛔ ${type}消息被过滤，不触发 webhook: ${remoteJid}`);
+    }
+    
+    return isAllowed;
 }
 
 async function sendWebhook(event, data) {
@@ -1034,19 +1042,9 @@ async function startSession(sessionId) {
                     await new Promise(resolve => setTimeout(resolve, 200));
                     
                     validMessages.forEach(m => {
-                        // 🔧 群组过滤：只有允许的群组才触发 webhook (AI 机器人回复)
-                        const isGroupMessage = m.remote_jid && m.remote_jid.endsWith('@g.us');
-                        if (isGroupMessage) {
-                            if (isAllowedWebhookGroup(m.remote_jid)) {
-                                console.log(`[${sessionId}] ✅ 允许的群组消息，触发 webhook: ${m.remote_jid}`);
-                                sendWebhook('message', { sessionId, message: m });
-                            } else {
-                                console.log(`[${sessionId}] ⛔ 群组消息被过滤，不触发 webhook: ${m.remote_jid}`);
-                            }
-                        } else {
-                            // 私聊消息不触发 webhook (或者您可以根据需要调整)
-                            console.log(`[${sessionId}] 📝 私聊消息，不触发 webhook: ${m.remote_jid}`);
-                            // sendWebhook('message', { sessionId, message: m }); // 取消注释以允许私聊触发 webhook
+                        // 🔧 联系人过滤：只有允许的联系人/群组才触发 webhook (AI 机器人回复)
+                        if (isAllowedWebhookContact(m.remote_jid)) {
+                            sendWebhook('message', { sessionId, message: m });
                         }
                         
                         // Broadcast via WebSocket for real-time updates (前端显示，不受影响)
