@@ -4947,3 +4947,34 @@ app.get('/api/sessions', (req, res) => {
     res.json(sessionList);
 });
 console.log('📋 Sessions list API available at /api/sessions');
+
+// ── Chats List API ────────────────────────────────────────────────────────────
+app.get('/api/session/:id/chats', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const limit = parseInt(req.query.limit) || 50;
+        
+        const { data, error } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid, name, notify, is_group, last_message_time')
+            .eq('session_id', id)
+            .order('last_message_time', { ascending: false, nulls: 'last' })
+            .limit(limit);
+        
+        if (error) throw error;
+        
+        const chats = (data || []).map(c => ({
+            jid: c.jid,
+            name: c.name || c.notify || c.jid.split('@')[0],
+            is_group: c.is_group,
+            last_message_time: c.last_message_time,
+            unreadCount: 0 // 需要額外邏輯計算
+        }));
+        
+        res.json(chats);
+    } catch (error) {
+        console.error('Error fetching chats:', error);
+        res.status(500).json({ error: 'Failed to fetch chats' });
+    }
+});
+console.log('📋 Chats list API available at /api/session/:id/chats');
