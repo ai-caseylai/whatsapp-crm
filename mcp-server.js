@@ -331,3 +331,97 @@ main().catch(err => {
   console.error('MCP Server failed to start:', err);
   process.exit(1);
 });
+
+// ── 新增查詢工具 ─────────────────────────────────────────────────────────────
+
+server.tool('search_contacts', 'Search contacts by name or phone number', {
+    sessionId: z.string().describe('Session ID'),
+    query: z.string().describe('Search query (name or phone)'),
+    limit: z.number().optional().describe('Max results (default 20)')
+}, async ({ sessionId, query, limit = 20 }) => {
+    const data = await api('GET', `/api/session/${sessionId}/contacts?search=${encodeURIComponent(query)}&limit=${limit}`);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+});
+
+server.tool('get_recent_chats', 'Get recent chats with unread counts', {
+    sessionId: z.string().describe('Session ID'),
+    limit: z.number().optional().describe('Max results (default 20)')
+}, async ({ sessionId, limit = 20 }) => {
+    const data = await api('GET', `/api/session/${sessionId}/chats?limit=${limit}`);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+});
+
+server.tool('get_media_list', 'Get list of media files with sender info', {
+    limit: z.number().optional().describe('Max results (default 50)'),
+    type: z.enum(['all', 'image', 'video', 'audio', 'document']).optional().describe('Filter by type')
+}, async ({ limit = 50, type = 'all' }) => {
+    const res = await fetch(`http://localhost:3000/api/admin/media/list?limit=${limit}`);
+    const data = await res.json();
+    let filtered = data.media || [];
+    if (type !== 'all') {
+        filtered = filtered.filter(m => m.type === type);
+    }
+    return { content: [{ type: 'text', text: JSON.stringify({ total: data.total, filtered: filtered.length, media: filtered }, null, 2) }] };
+});
+
+server.tool('search_messages', 'Search messages by content', {
+    sessionId: z.string().describe('Session ID'),
+    query: z.string().describe('Search query'),
+    chatJid: z.string().optional().describe('Optional: limit to specific chat')
+}, async ({ sessionId, query, chatJid }) => {
+    // 搜索訊息 - 需要先獲取 chats 然後搜索 messages
+    const chats = await api('GET', `/api/session/${sessionId}/chats?limit=100`);
+    const results = [];
+    for (const chat of chats) {
+        if (chatJid && chat.jid !== chatJid) continue;
+        try {
+            const messages = await api('GET', `/api/session/${sessionId}/messages/${encodeURIComponent(chat.jid)}?limit=100`);
+            const matches = messages.filter(m => 
+                m.content && m.content.toLowerCase().includes(query.toLowerCase())
+            );
+            if (matches.length > 0) {
+                results.push({
+                    chat: chat.name || chat.jid,
+                    chatJid: chat.jid,
+                    matches: matches.slice(0, 5).map(m => ({
+                        content: m.content?.substring(0, 200),
+                        timestamp: m.message_timestamp,
+                        from_me: m.from_me
+                    }))
+                });
+            }
+        } catch (e) {}
+    }
+    return { content: [{ type: 'text', text: JSON.stringify({ query, totalChats: chats.length, resultsCount: results.length, results }, null, 2) }] };
+});
+
+server.tool('get_chat_summary', 'Get a summary of a chat including participants and recent activity', {
+    sessionId: z.string().describe('Session ID'),
+    chatJid: z.string().describe('Chat JID')
+}, async ({ sessionId, chatJid }) => {
+    const contact = await api('GET', `/api/session/${sessionId}/contacts`);
+    const chat = contact.find(c => c.jid === chatJid) || {};
+    const messages = await api('GET', `/api/session/${sessionId}/messages/${encodeURIComponent(chatJid)}?limit=50`);
+    
+    // 統計
+    const totalMessages = messages.length;
+    const sentByMe = messages.filter(m => m.from_me).length;
+    const withMedia = messages.filter(m => m.attachment_path).length;
+    const lastMessage = messages[0];
+    
+    return { content: [{ type: 'text', text: JSON.stringify({
+        chatName: chat.name || chat.notify || chatJid.split('@')[0],
+        chatJid,
+        isGroup: chat.is_group,
+        totalMessages,
+        sentByMe,
+        received: totalMessages - sentByMe,
+        withMedia,
+        lastMessage: lastMessage ? {
+            content: lastMessage.content?.substring(0, 100),
+            timestamp: lastMessage.message_timestamp
+        } : null
+    }, null, 2) }] };
+});
+
+console.log('✅ 新增 MCP 查詢工具: search_contacts, get_recent_chats, get_media_list, search_messages, get_chat_summary');
