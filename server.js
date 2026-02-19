@@ -8,6 +8,7 @@ const qrcode = require('qrcode');
 const mime = require('mime-types');
 const multer = require('multer'); // Import multer
 const { createClient } = require('@supabase/supabase-js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Simple In-Memory Contact Cache (since makeInMemoryStore is not available in this version)
 const contactCache = new Map(); // sessionId -> Map<jid, Contact>
@@ -17,42 +18,22 @@ const SUPABASE_URL = 'https://izwdetsrqjepoxmocore.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6d2RldHNycWplcG94bW9jb3JlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDIwNDgwOSwiZXhwIjoyMDg1NzgwODA5fQ.nbq_NKxfOc8exmEHZ6juJkSLE9SRsXtmMEEoig6oqAE';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Gemini AI Config
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+let genAI = null;
+let geminiModel = null;
+if (GEMINI_API_KEY) {
+    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    geminiModel = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    console.log('✅ Gemini AI initialized');
+} else {
+    console.warn('⚠️  GEMINI_API_KEY not set - AI features will be disabled');
+}
+
 // --- API V1 Config ---
 const MASTER_KEY = process.env.BAILEYS_MASTER_KEY || 'testing';
 const WEBHOOK_SECRET = process.env.WHATSAPP_WEBHOOK_SECRET || 'webhook_secret';
 let globalWebhookUrl = null;
-
-// 🔧 Webhook 过滤配置 - 只允许特定联系人/群组触发 webhook (AI 机器人回复)
-// 支持群组 (@g.us) 和私聊 (@s.whatsapp.net 或 @lid)
-const ALLOWED_WEBHOOK_CONTACTS = [
-    '210719786180760@lid',  // Casey 的私聊 (唯一允许的对话)
-    // '120363148339809413@g.us',  // Casey哥群组 (如需启用请取消注释)
-];
-
-// 检查是否允许该联系人/群组触发 webhook
-function isAllowedWebhookContact(remoteJid) {
-    if (!remoteJid) {
-        return false;
-    }
-    
-    // 如果允许列表为空，打印警告
-    if (ALLOWED_WEBHOOK_CONTACTS.length === 0) {
-        console.log(`⚠️  警告: ALLOWED_WEBHOOK_CONTACTS 为空，没有任何对话会触发 webhook。`);
-        return false;
-    }
-    
-    // 检查是否在允许列表中
-    const isAllowed = ALLOWED_WEBHOOK_CONTACTS.includes(remoteJid);
-    
-    if (isAllowed) {
-        console.log(`✅ 允许的联系人，触发 webhook: ${remoteJid}`);
-    } else {
-        const type = remoteJid.endsWith('@g.us') ? '群组' : '私聊';
-        console.log(`⛔ ${type}消息被过滤，不触发 webhook: ${remoteJid}`);
-    }
-    
-    return isAllowed;
-}
 
 async function sendWebhook(event, data) {
     if (!globalWebhookUrl) return;
@@ -1042,12 +1023,9 @@ async function startSession(sessionId) {
                     await new Promise(resolve => setTimeout(resolve, 200));
                     
                     validMessages.forEach(m => {
-                        // 🔧 联系人过滤：只有允许的联系人/群组才触发 webhook (AI 机器人回复)
-                        if (isAllowedWebhookContact(m.remote_jid)) {
-                            sendWebhook('message', { sessionId, message: m });
-                        }
+                        sendWebhook('message', { sessionId, message: m });
                         
-                        // Broadcast via WebSocket for real-time updates (前端显示，不受影响)
+                        // Broadcast via WebSocket for real-time updates
                         if (global.broadcastMessage) {
                             const hasMedia = m.attachment_path || ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage'].includes(m.message_type);
                             console.log(`[${sessionId}] 📤 广播实时新消息到前端: ${m.remote_jid}${hasMedia ? ' (含媒体)' : ''}`);
@@ -4827,6 +4805,52 @@ app.post('/api/crm/messages/:messageId/revoke', checkCaseyCRMToken, async (req, 
     }
 });
 
+// ============================================
+// Gemini AI API
+// ============================================
+
+// Gemini Chat
+app.post('/api/gemini/chat', async (req, res) => {
+    try {
+        const { message } = req.body;
+        
+        if (!message || typeof message !== 'string' || message.trim().length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                error: '請提供有效的訊息內容' 
+            });
+        }
+        
+        // Check if Gemini is available
+        if (!geminiModel) {
+            return res.status(503).json({ 
+                success: false, 
+                error: 'AI服務未配置，請聯繫管理員設置 GEMINI_API_KEY' 
+            });
+        }
+        
+        console.log(`📨 Gemini AI Request: ${message.substring(0, 50)}...`);
+        
+        // Call Gemini API
+        const result = await geminiModel.generateContent(message);
+        const response = await result.response;
+        const text = response.text();
+        
+        console.log(`✅ Gemini AI Response: ${text.substring(0, 100)}...`);
+        
+        res.json({ 
+            success: true, 
+            response: text 
+        });
+    } catch (error) {
+        console.error('❌ Gemini AI Error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message || '處理請求時發生錯誤' 
+        });
+    }
+});
+
 server.listen(port, () => {
     console.log(`Public WhatsApp Server running on port ${port}`);
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
@@ -4835,3 +4859,91 @@ server.listen(port, () => {
     console.log(`🔌 WebSocket 服務器已啟動`);
     console.log(`🔑 Casey CRM API: Bearer token 'casey-crm' enabled`);
 });
+
+
+// ── Media List API with Sender Info ───────────────────────────────────────────
+app.get('/api/admin/media/list', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 100;
+        const offset = parseInt(req.query.offset) || 0;
+        const files = fs.readdirSync(SHARED_MEDIA_DIR);
+        
+        const mediaFiles = files
+            .filter(f => !f.startsWith('.'))
+            .map(filename => {
+                const filepath = path.join(SHARED_MEDIA_DIR, filename);
+                const stats = fs.statSync(filepath);
+                const ext = path.extname(filename).toLowerCase();
+                let type = 'document';
+                if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) type = 'image';
+                else if (['.mp4', '.mov', '.avi', '.webm'].includes(ext)) type = 'video';
+                else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) type = 'audio';
+                const messageId = path.basename(filename, ext);
+                return {
+                    filename,
+                    url: '/media/' + filename,
+                    type,
+                    size: stats.size,
+                    created_at: stats.mtime,
+                    message_id: messageId
+                };
+            })
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        const total = mediaFiles.length;
+        const paginatedFiles = mediaFiles.slice(offset, offset + limit);
+        
+        // Fetch sender info from Supabase
+        const messageIds = paginatedFiles.map(f => f.message_id);
+        const { data: messages } = await supabase
+            .from('whatsapp_messages')
+            .select('message_id, remote_jid, push_name, from_me')
+            .in('message_id', messageIds);
+        
+        const jids = [...new Set((messages || []).map(m => m.remote_jid).filter(Boolean))];
+        const { data: contacts } = await supabase
+            .from('whatsapp_contacts')
+            .select('jid, name, notify, is_group')
+            .in('jid', jids);
+        
+        const msgMap = new Map((messages || []).map(m => [m.message_id, m]));
+        const contactMap = new Map((contacts || []).map(c => [c.jid, c]));
+        
+        const enrichedMedia = paginatedFiles.map(media => {
+            const msg = msgMap.get(media.message_id);
+            if (msg) {
+                const contact = contactMap.get(msg.remote_jid);
+                return {
+                    ...media,
+                    sender: msg.push_name || (msg.from_me ? '我' : null),
+                    from_me: msg.from_me,
+                    chat_jid: msg.remote_jid,
+                    chat_name: contact?.name || contact?.notify || msg.remote_jid.split('@')[0],
+                    is_group: contact?.is_group || msg.remote_jid.includes('@g.us')
+                };
+            }
+            return media;
+        });
+        
+        res.json({ media: enrichedMedia, total, limit, offset, hasMore: offset + limit < total });
+    } catch (error) {
+        console.error('Error listing media:', error);
+        res.status(500).json({ error: 'Failed to list media files' });
+    }
+});
+console.log('📷 Media list API (with sender info) available at /api/admin/media/list');
+
+// ── Sessions List API ─────────────────────────────────────────────────────────
+app.get('/api/sessions', (req, res) => {
+    const sessionList = [];
+    sessions.forEach((value, key) => {
+        sessionList.push({
+            id: key,
+            status: value.status || 'unknown',
+            phoneNumber: value.userInfo?.phoneNumber || null,
+            name: value.userInfo?.name || null
+        });
+    });
+    res.json(sessionList);
+});
+console.log('📋 Sessions list API available at /api/sessions');

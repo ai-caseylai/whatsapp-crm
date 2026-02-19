@@ -21,7 +21,7 @@
             <h1 class="text-xl font-bold flex items-center gap-2">
                 <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20ZM12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z"/></svg>
                 WhatsApp CRM
-                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.73</span>
+                <span class="text-xs font-normal bg-[#008f6f] px-2 py-0.5 rounded-full">v0.80-gemini</span>
             </h1>
             <!-- Navigation Links: Always Visible -->
             <nav class="flex space-x-2 ml-4 text-sm font-medium">
@@ -253,6 +253,81 @@
                 </div>
             </div>
         </div>
+
+        <!-- AI Resizable Divider -->
+        <div id="ai-resize-handle" class="w-1 bg-gray-300 hover:bg-purple-500 cursor-col-resize transition-colors relative group" title="拖動調整AI對話欄寬度">
+            <div class="absolute inset-y-0 -left-1 -right-1"></div>
+            <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M15.41 16.09l-4.58-4.59 4.58-4.59L14 5.5l-6 6 6 6z"/>
+                </svg>
+            </div>
+        </div>
+
+        <!-- AI Sidebar: Gemini Chat -->
+        <div id="ai-sidebar" class="bg-gradient-to-b from-purple-50 to-white border-l border-purple-200 flex flex-col z-0 transition-all duration-300 relative" style="width: 400px; min-width: 300px; max-width: 600px;">
+            <!-- AI Header with toggle button -->
+            <div class="p-4 pr-12 border-b border-purple-200 bg-gradient-to-r from-purple-100 to-indigo-100 space-y-2 relative">
+                <!-- 縮放按鈕 -->
+                <button onclick="toggleAISidebar()" id="toggle-ai-btn" class="absolute top-3 right-3 z-10 p-1.5 bg-white hover:bg-purple-50 rounded-lg transition shadow-sm border border-purple-300" title="隱藏AI對話欄">
+                    <svg id="ai-toggle-icon" class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path>
+                    </svg>
+                </button>
+                
+                <div class="flex items-center gap-2">
+                    <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                    </svg>
+                    <h3 class="font-bold text-purple-800 text-lg">Gemini AI 助手</h3>
+                </div>
+                <p class="text-xs text-purple-600">智能對話助手</p>
+            </div>
+
+            <!-- AI Chat Messages -->
+            <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-w-2 scrollbar-thumb-rounded scrollbar-track-gray-lighter">
+                <div class="text-center text-gray-500 text-sm">
+                    <div class="inline-block p-4 bg-purple-50 rounded-lg">
+                        <svg class="w-12 h-12 text-purple-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                        </svg>
+                        <p class="font-medium text-purple-700">開始與Gemini AI對話</p>
+                        <p class="text-xs mt-1">詢問任何問題，獲取智能回答</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Input Area -->
+            <div class="p-4 bg-white border-t border-purple-200">
+                <div class="flex gap-2 items-end">
+                    <div class="flex-1 relative">
+                        <textarea 
+                            id="ai-input" 
+                            rows="3" 
+                            placeholder="輸入您的問題...（Shift + Enter 換行，Enter 發送）" 
+                            class="w-full px-3 py-2 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none text-sm"
+                            onkeydown="handleAIInputKeyDown(event)"
+                        ></textarea>
+                    </div>
+                    <button onclick="sendAIMessage()" id="ai-send-btn" class="p-2 bg-purple-500 hover:bg-purple-600 text-white rounded-full transition flex-shrink-0 h-10" title="發送給Gemini">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="flex justify-between items-center mt-2 text-xs text-gray-500">
+                    <span>🤖 由 Google Gemini 提供支援</span>
+                    <button onclick="clearAIChat()" class="text-purple-600 hover:text-purple-800 font-medium">清除對話</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toggle AI Sidebar Button (Fixed) -->
+        <button onclick="toggleAISidebar()" id="toggle-ai-fixed-btn" class="hidden absolute top-4 right-4 z-20 p-2 bg-white hover:bg-purple-50 rounded-lg shadow-lg transition border border-purple-300" title="顯示AI對話欄">
+            <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+            </svg>
+        </button>
     </div>
 
     <!-- Calendar View (Hidden by default) -->
@@ -2052,6 +2127,220 @@
                 }
             });
         })();
+
+        // ============================================
+        // AI Sidebar Functions
+        // ============================================
+        
+        // Toggle AI sidebar visibility
+        function toggleAISidebar() {
+            const sidebar = document.getElementById('ai-sidebar');
+            const resizeHandle = document.getElementById('ai-resize-handle');
+            const fixedBtn = document.getElementById('toggle-ai-fixed-btn');
+            const toggleBtn = document.getElementById('toggle-ai-btn');
+            const icon = document.getElementById('ai-toggle-icon');
+            
+            const isHidden = sidebar.style.display === 'none';
+            
+            if (isHidden) {
+                // Show sidebar
+                sidebar.style.display = 'flex';
+                resizeHandle.style.display = 'block';
+                fixedBtn.classList.add('hidden');
+                localStorage.setItem('aiSidebarHidden', 'false');
+            } else {
+                // Hide sidebar
+                sidebar.style.display = 'none';
+                resizeHandle.style.display = 'none';
+                fixedBtn.classList.remove('hidden');
+                localStorage.setItem('aiSidebarHidden', 'true');
+            }
+        }
+
+        // Initialize resizable AI sidebar
+        (function initResizableAISidebar() {
+            const resizeHandle = document.getElementById('ai-resize-handle');
+            const sidebar = document.getElementById('ai-sidebar');
+            
+            // Restore saved width and visibility
+            const savedWidth = localStorage.getItem('aiSidebarWidth');
+            const savedHidden = localStorage.getItem('aiSidebarHidden');
+            
+            if (savedWidth) {
+                sidebar.style.width = savedWidth + 'px';
+            }
+            
+            if (savedHidden === 'true') {
+                sidebar.style.display = 'none';
+                resizeHandle.style.display = 'none';
+                document.getElementById('toggle-ai-fixed-btn').classList.remove('hidden');
+            }
+            
+            let isResizing = false;
+            
+            resizeHandle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                
+                const containerRect = document.getElementById('view-chat').getBoundingClientRect();
+                const newWidth = containerRect.right - e.clientX;
+                
+                const minWidth = parseInt(sidebar.style.minWidth) || 300;
+                const maxWidth = parseInt(sidebar.style.maxWidth) || 600;
+                
+                if (newWidth >= minWidth && newWidth <= maxWidth) {
+                    sidebar.style.width = newWidth + 'px';
+                }
+            });
+            
+            document.addEventListener('mouseup', () => {
+                if (isResizing) {
+                    isResizing = false;
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    
+                    // Save to localStorage
+                    const currentWidth = sidebar.offsetWidth;
+                    localStorage.setItem('aiSidebarWidth', currentWidth);
+                }
+            });
+        })();
+
+        // Send message to Gemini AI
+        async function sendAIMessage() {
+            const input = document.getElementById('ai-input');
+            const sendBtn = document.getElementById('ai-send-btn');
+            const messagesContainer = document.getElementById('ai-messages');
+            
+            const message = input.value.trim();
+            if (!message) return;
+            
+            // Disable input while processing
+            input.disabled = true;
+            sendBtn.disabled = true;
+            
+            // Clear welcome message if present
+            if (messagesContainer.querySelector('.text-center')) {
+                messagesContainer.innerHTML = '';
+            }
+            
+            // Add user message
+            appendAIMessage(message, 'user');
+            input.value = '';
+            
+            // Add loading indicator
+            const loadingId = 'ai-loading-' + Date.now();
+            appendAIMessage('思考中...', 'assistant', loadingId);
+            
+            try {
+                // Call Gemini API
+                const response = await fetch('/api/gemini/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message }),
+                });
+                
+                const data = await response.json();
+                
+                // Remove loading indicator
+                const loadingElement = document.getElementById(loadingId);
+                if (loadingElement) loadingElement.remove();
+                
+                if (data.success) {
+                    appendAIMessage(data.response, 'assistant');
+                } else {
+                    appendAIMessage('抱歉，發生錯誤：' + (data.error || '無法連接到AI服務'), 'error');
+                }
+            } catch (error) {
+                // Remove loading indicator
+                const loadingElement = document.getElementById(loadingId);
+                if (loadingElement) loadingElement.remove();
+                
+                appendAIMessage('抱歉，網路連接失敗，請稍後再試', 'error');
+                console.error('AI API error:', error);
+            } finally {
+                input.disabled = false;
+                sendBtn.disabled = false;
+                input.focus();
+            }
+        }
+
+        // Append message to AI chat
+        function appendAIMessage(text, type, id = null) {
+            const messagesContainer = document.getElementById('ai-messages');
+            const messageDiv = document.createElement('div');
+            if (id) messageDiv.id = id;
+            
+            if (type === 'user') {
+                messageDiv.className = 'flex justify-end';
+                messageDiv.innerHTML = `
+                    <div class="bg-purple-500 text-white px-4 py-2 rounded-lg max-w-[80%] shadow-sm">
+                        <p class="text-sm whitespace-pre-wrap">${escapeHtml(text)}</p>
+                    </div>
+                `;
+            } else if (type === 'assistant' || type === 'loading') {
+                messageDiv.className = 'flex justify-start';
+                const isLoading = text === '思考中...';
+                messageDiv.innerHTML = `
+                    <div class="bg-white border border-purple-200 px-4 py-2 rounded-lg max-w-[80%] shadow-sm">
+                        <div class="flex items-start gap-2">
+                            <svg class="w-5 h-5 text-purple-600 flex-shrink-0 mt-0.5 ${isLoading ? 'animate-pulse' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                            </svg>
+                            <p class="text-sm text-gray-800 whitespace-pre-wrap">${escapeHtml(text)}</p>
+                        </div>
+                    </div>
+                `;
+            } else if (type === 'error') {
+                messageDiv.className = 'flex justify-center';
+                messageDiv.innerHTML = `
+                    <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm">
+                        ${escapeHtml(text)}
+                    </div>
+                `;
+            }
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Handle AI input keydown
+        function handleAIInputKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendAIMessage();
+            }
+        }
+
+        // Clear AI chat history
+        function clearAIChat() {
+            const messagesContainer = document.getElementById('ai-messages');
+            messagesContainer.innerHTML = `
+                <div class="text-center text-gray-500 text-sm">
+                    <div class="inline-block p-4 bg-purple-50 rounded-lg">
+                        <svg class="w-12 h-12 text-purple-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                        </svg>
+                        <p class="font-medium text-purple-700">對話已清除</p>
+                        <p class="text-xs mt-1">開始新的對話</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
 
         // Show message actions menu
         function showMessageActions(event, messageId, isFromMe) {
