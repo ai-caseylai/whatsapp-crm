@@ -28,9 +28,25 @@
         }
         .chat-list-container {
             flex: 1;
-            overflow-y: auto;
+            overflow-y: scroll;
             overflow-x: hidden;
-            height: 0; /* 重要：讓 flex 子元素可以滾動 */
+            height: 0;
+            scrollbar-width: thin;
+            scrollbar-color: var(--primary) var(--bg-main);
+        }
+        .chat-list-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .chat-list-container::-webkit-scrollbar-track {
+            background: var(--bg-main);
+            border-radius: 4px;
+        }
+        .chat-list-container::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 4px;
+        }
+        .chat-list-container::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-light);
         }
         .chat-area { 
             display: flex; 
@@ -47,10 +63,26 @@
         }
         .messages-area { 
             flex: 1;
-            overflow-y: auto;
+            overflow-y: scroll;
             overflow-x: hidden;
             padding: 1rem;
-            height: 0; /* 重要：讓 flex 子元素可以滾動 */
+            height: 0;
+            scrollbar-width: thin;
+            scrollbar-color: var(--primary) var(--bg-dark);
+        }
+        .messages-area::-webkit-scrollbar {
+            width: 8px;
+        }
+        .messages-area::-webkit-scrollbar-track {
+            background: var(--bg-dark);
+            border-radius: 4px;
+        }
+        .messages-area::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 4px;
+        }
+        .messages-area::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-light);
         }
         .message-in { 
             background: var(--bg-card); 
