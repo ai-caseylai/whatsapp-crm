@@ -364,7 +364,7 @@
 
         function renderMessages(messages) {
             const container = document.getElementById("messages");
-            container.innerHTML = messages.reverse().map(m => {
+            container.innerHTML = messages.map(m => {
                 const cls = m.from_me ? "message-out" : "message-in";
                 const time = m.message_timestamp ? new Date(m.message_timestamp).toLocaleTimeString("zh-TW", {hour: "2-digit", minute: "2-digit"}) : "";
                 const msgType = m.message_type || "";
@@ -399,12 +399,9 @@
 
                 return `<div class="${cls}"><div>${content}${mediaHtml}</div><div style="font-size: 0.65rem; opacity: 0.7; margin-top: 0.25rem;">${time}</div></div>`;
             }).join("");
-            // 滾動到最新訊息（確保在渲染後執行）
+            // 滾動到最新訊息（訊息按時間排序，最新的在最後）
             requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    container.scrollTop = container.scrollHeight;
-                    console.log('滾動到最新訊息:', container.scrollHeight);
-                });
+                container.scrollTop = container.scrollHeight;
             });
         }
 
