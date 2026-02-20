@@ -501,7 +501,7 @@ if (!token) { window.location.href = "/login.html"; }
             ws.onopen = () => console.log("WS 已連接");
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
-                if (data.type === "new_message" && data.chatId === currentChatId) {
+                if (data.type === "new_message") {
                     // 新訊息 - 重新載入
                     selectChat(currentChatId, document.getElementById("chat-name").textContent);
                     showNotification("💬 新訊息", data.message?.content?.substring(0,50) || "媒體");
