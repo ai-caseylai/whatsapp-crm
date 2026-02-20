@@ -384,19 +384,29 @@ if (!token) { window.location.href = "/login.html"; }
                     }
                     if (!content) content = "[圖片]";
                 } else if (msgType === "videoMessage") {
-                    const videoPath = m.attachment_path ? "/media/" + m.attachment_path : null;
-                    mediaHtml = `<div style="margin-top: 0.5rem;"><video src="${videoPath}" style="max-width: 250px; border-radius: 8px;" controls preload="metadata"></video></div>`;
+                    if (m.attachment_path) {
+                        mediaHtml = `<div style="margin-top: 0.5rem;"><video src="/media/${m.attachment_path}" style="max-width: 250px; border-radius: 8px;" controls preload="metadata"></video></div>`;
+                    } else {
+                        mediaHtml = `<div style="margin-top: 0.5rem;padding:0.75rem;background:#333;border-radius:8px;color:#888;">🎥 [影片] - 需要下載</div>`;
+                    }
                     if (!content) content = "[影片]";
                 } else if (msgType === "audioMessage" || msgType === "pttMessage") {
                     const audioPath = m.attachment_path ? "/media/" + m.attachment_path : "/media/" + m.message_id + ".ogg";
                     mediaHtml = `<div style="margin-top: 0.5rem;"><audio src="${audioPath}" style="width: 200px;" controls preload="metadata"></audio></div>`;
                     content = "🎤 語音訊息";
                 } else if (msgType === "stickerMessage") {
-                    const stickerPath = m.attachment_path ? "/media/" + m.attachment_path : null;
-                    mediaHtml = `<div style="margin-top: 0.5rem;"><img src="${stickerPath}" style="max-width: 150px;"></div>`;
+                    if (m.attachment_path) {
+                        mediaHtml = `<div style="margin-top: 0.5rem;"><img src="/media/${m.attachment_path}" style="max-width: 150px;"></div>`;
+                    } else {
+                        mediaHtml = `<div style="margin-top: 0.5rem;">😊 [貼圖]</div>`;
+                    }
                     content = "";
                 } else if (msgType === "documentMessage") {
-                    const docPath = m.attachment_path ? "/media/" + m.attachment_path : null;
+                    if (m.attachment_path) {
+                        mediaHtml = `<div style="margin-top: 0.5rem;"><a href="/media/${m.attachment_path}" target="_blank">📎 ${m.content || '文件'}</a></div>`;
+                    } else {
+                        mediaHtml = `<div style="margin-top: 0.5rem;color:#888;">📎 [文件] - 需要下載</div>`;
+                    }
                     mediaHtml = `<div style="margin-top: 0.5rem;"><a href="${docPath}" target="_blank">📎 下載文件</a></div>`;
                     if (!content) content = "[文件]";
                 }
