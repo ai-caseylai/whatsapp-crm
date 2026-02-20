@@ -486,7 +486,7 @@ if (!token) { window.location.href = "/login.html"; }
         // WebSocket 連接
         let ws;
         function connectWebSocket() {
-            const wsUrl = "wss://" + window.location.host;
+            const wsUrl = "wss://" + window.location.host + "/ws";
             ws = new WebSocket(wsUrl);
             ws.onopen = () => console.log("WS 已連接");
             ws.onmessage = (e) => {
