@@ -4856,6 +4856,26 @@ server.listen(port, () => {
     console.log(`🔄 自動重連: 已啟用 (最多 ${RECONNECT_CONFIG.maxAttempts} 次嘗試)`);
     console.log(`💓 心跳檢測: 每 ${RECONNECT_CONFIG.heartbeatInterval/1000} 秒`);
     console.log(`🔍 自動檢查: 每 5 分鐘檢查斷開的會話`);
+// 認證系統
+const AUTH_USERS = { "casey": "casey2026", "admin": "admin2026" };
+const AUTH_TOKENS = new Map();
+app.post("/api/auth/login", (req, res) => {
+    const { username, password } = req.body;
+    if (AUTH_USERS[username] === password) {
+        const token = require("crypto").randomBytes(32).toString("hex");
+        AUTH_TOKENS.set(token, { username });
+        res.json({ success: true, token, username });
+    } else {
+        res.status(401).json({ success: false, error: "帳號或密碼錯誤" });
+    }
+});
+app.get("/api/auth/verify", (req, res) => {
+    const token = req.headers["authorization"]?.replace("Bearer ", "");
+    const user = AUTH_TOKENS.get(token);
+    res.json({ valid: !!user, username: user?.username });
+});
+console.log("Auth API ready");
+
     console.log(`🔌 WebSocket 服務器已啟動`);
     console.log(`🔑 Casey CRM API: Bearer token 'casey-crm' enabled`);
 });
