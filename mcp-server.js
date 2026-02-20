@@ -425,3 +425,64 @@ server.tool('get_chat_summary', 'Get a summary of a chat including participants 
 });
 
 console.log('✅ 新增 MCP 查詢工具: search_contacts, get_recent_chats, get_media_list, search_messages, get_chat_summary');
+
+// ── 簡化工具（不需要 sessionId）──────────────────────────────────────────────
+const DEFAULT_SESSION = 'sess_1771472517677';
+
+server.tool('get_all_contacts', '列出所有 WhatsApp 聯絡人', {
+  limit: z.number().optional().describe('最大結果數（默認100）')
+}, async ({ limit = 100 }) => {
+  const data = await api('GET', `/api/sessions/${DEFAULT_SESSION}/contacts?limit=${limit}`);
+  return { content: [{ type: 'text', text: JSON.stringify({
+    total: data.length,
+    summary: {
+      groups: data.filter(c => c.is_group).length,
+      private: data.filter(c => !c.is_group).length
+    },
+    contacts: data.slice(0, limit).map(c => ({
+      name: c.name || c.notify || c.jid.split('@')[0],
+      jid: c.jid,
+      is_group: c.is_group
+    }))
+  }, null, 2) }] };
+});
+
+server.tool('get_all_stats', '獲取 WhatsApp 統計', {}, async () => {
+  const contacts = await api('GET', `/api/sessions/${DEFAULT_SESSION}/contacts?limit=10000`);
+  const mediaRes = await fetch('http://localhost:3000/api/admin/media/list?limit=1');
+  const media = await mediaRes.json();
+  return { content: [{ type: 'text', text: JSON.stringify({
+    session: DEFAULT_SESSION,
+    contacts: {
+      total: contacts.length,
+      groups: contacts.filter(c => c.is_group).length,
+      private: contacts.filter(c => !c.is_group).length,
+      named: contacts.filter(c => c.name || c.notify).length
+    },
+    media: { total: media.total || 0 }
+  }, null, 2) }] };
+});
+
+server.tool('quick_search', '快速搜尋聯絡人', {
+  query: z.string().describe('搜尋關鍵字')
+}, async ({ query }) => {
+  const data = await api('GET', `/api/sessions/${DEFAULT_SESSION}/contacts?search=${encodeURIComponent(query)}&limit=20`);
+  return { content: [{ type: 'text', text: JSON.stringify({
+    query,
+    found: data.length,
+    results: data.map(c => ({
+      name: c.name || c.notify || '未命名',
+      jid: c.jid,
+      is_group: c.is_group
+    }))
+  }, null, 2) }] };
+});
+
+server.tool('get_all_chats', '列出最近聊天', {
+  limit: z.number().optional().describe('最大結果數')
+}, async ({ limit = 20 }) => {
+  const data = await api('GET', `/api/sessions/${DEFAULT_SESSION}/chats?limit=${limit}`);
+  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+});
+
+console.log('✅ 簡化工具已添加: get_all_contacts, get_all_stats, quick_search, get_all_chats');
