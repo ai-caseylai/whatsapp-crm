@@ -519,12 +519,14 @@ if (!token) { window.location.href = "/login.html"; }
             ws.onopen = () => console.log("WS 已連接");
     console.log("[WS] 連接成功");
             ws.onmessage = (e) => {
+            console.log("[WS] 收到訊息:", e.data.substring(0, 100));
                 const data = JSON.parse(e.data);
                 if (data.type === "connected") {
                     console.log("WS 已連接");
                     return;
                 }
                 if (data.type === "new_message") {
+                    console.log("[WS] 新訊息:", data.chatId, data.message?.content?.substring(0,30));
                     const msg = data.message;
                     const preview = msg?.content?.substring(0,50) || "媒體";
                     if (msg?.from_me) {
