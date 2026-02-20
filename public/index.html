@@ -255,6 +255,19 @@
     </div>
 
     <script>
+window.onerror = function(msg, url, line, col, error) {
+    console.error("[全局錯誤]", msg, "at", url, ":", line);
+    return false;
+};
+window.addEventListener("unhandledrejection", function(e) {
+    console.error("[未處理 Promise 錯誤]", e.reason);
+});
+
+console.log("=== WhatsApp CRM 載入開始 ===");
+console.log("時間:", new Date().toISOString());
+console.log("URL:", window.location.href);
+console.log("User Agent:", navigator.userAgent);
+
 // 檢查登入狀態
 const token = localStorage.getItem("crm_token");
 if (!token) { window.location.href = "/login.html"; }
@@ -276,32 +289,35 @@ if (!token) { window.location.href = "/login.html"; }
                         return data.url;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { console.error("[ERROR]", e);}
             avatarCache.set(jid, null);
             return null;
         }
 
         async function init() {
+    console.log("[DEBUG] init() 開始");
             await loadSessions();
             await loadContacts();
         }
 
         async function loadSessions() {
+    console.log("[DEBUG] loadSessions() 開始");
             try {
                 const res = await fetch('/api/sessions');
                 allSessions = await res.json();
                 const s = allSessions.find(x => x.id === currentSessionId) || allSessions[0];
                 document.getElementById('sessionName').textContent = s?.name || s?.id?.split('_')[1] || 'Unknown';
                 document.getElementById('sessionStatus').style.background = s?.status === 'connected' ? 'var(--success)' : 'var(--error)';
-            } catch (e) {}
+            } catch (e) { console.error("[ERROR]", e);}
         }
 
         async function loadContacts() {
+    console.log("[DEBUG] loadContacts() 開始");
             try {
                 const res = await fetch(`/api/session/${currentSessionId}/contacts?limit=500`);
                 allContacts = await res.json();
                 renderChatList();
-            } catch (e) {}
+            } catch (e) { console.error("[ERROR]", e);}
         }
 
         async function renderChatList() {
@@ -361,7 +377,7 @@ if (!token) { window.location.href = "/login.html"; }
                 const res = await fetch(`/api/session/${currentSessionId}/messages/${encodeURIComponent(jid)}?limit=50`);
                 const messages = await res.json();
                 renderMessages(messages);
-            } catch (e) {
+            } catch (e) { console.error("[ERROR]", e);
                 document.getElementById('messages').innerHTML = '<div style="color: var(--error); text-align: center; padding: 2rem;">載入失敗</div>';
             }
         }
@@ -456,7 +472,7 @@ if (!token) { window.location.href = "/login.html"; }
                     tempDiv.querySelector("div:last-child").textContent = "發送失敗";
                     tempDiv.style.opacity = "0.5";
                 }
-            } catch (e) {
+            } catch (e) { console.error("[ERROR]", e);
                 console.error("發送失敗:", e);
                 tempDiv.querySelector("div:last-child").textContent = "發送失敗";
                 tempDiv.style.opacity = "0.5";
@@ -499,6 +515,7 @@ if (!token) { window.location.href = "/login.html"; }
             const wsUrl = "wss://" + window.location.host + "/ws";
             ws = new WebSocket(wsUrl);
             ws.onopen = () => console.log("WS 已連接");
+    console.log("[WS] 連接成功");
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
                 if (data.type === "connected") {
@@ -525,6 +542,7 @@ if (!token) { window.location.href = "/login.html"; }
                 }
             };
             ws.onclose = () => setTimeout(connectWebSocket, 3000);
+    console.log("[WS] 連接關閉，3秒後重連");
         }
         function showNotification(title, body) {
             if (Notification.permission === "granted") {
