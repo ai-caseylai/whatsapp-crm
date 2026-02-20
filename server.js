@@ -5127,3 +5127,45 @@ app.get('/api/crm/ws-info', (req, res) => {
 });
 
 console.log('✅ 實時通知 API 已啟動');
+
+// 搜尋訊息 API
+app.get('/api/session/:id/search-messages', async (req, res) => {
+    const { id } = req.params;
+    const { query, contact, startDate, endDate, limit } = req.query;
+    try {
+        let dbQuery = supabase.from('whatsapp_messages').select('*').eq('session_id', id).order('message_timestamp', { ascending: false }).limit(parseInt(limit) || 50);
+        if (query) dbQuery = dbQuery.ilike('content', '%' + query + '%');
+        if (contact) dbQuery = dbQuery.eq('remote_jid', contact);
+        if (startDate) dbQuery = dbQuery.gte('message_timestamp', startDate);
+        if (endDate) dbQuery = dbQuery.lte('message_timestamp', endDate);
+        const { data, error } = await dbQuery;
+        if (error) throw error;
+        const results = data.map(m => ({
+            id: m.message_id, chatJid: m.remote_jid, fromMe: m.from_me,
+            sender: m.from_me ? 'Casey' : (m.push_name || 'Unknown'),
+            content: m.content, type: m.message_type, time: m.message_timestamp
+        }));
+        res.json({ total: results.length, messages: results });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 最新訊息 API
+app.get('/api/session/:id/recent-messages', async (req, res) => {
+    const { id } = req.params;
+    const limit = parseInt(req.query.limit) || 10;
+    try {
+        const { data, error } = await supabase.from('whatsapp_messages')
+            .select('message_id, remote_jid, from_me, push_name, content, message_type, message_timestamp')
+            .eq('session_id', id).order('message_timestamp', { ascending: false }).limit(limit);
+        if (error) throw error;
+        const results = data.map(m => ({
+            id: m.message_id, chatJid: m.remote_jid, fromMe: m.from_me,
+            sender: m.from_me ? 'Casey' : (m.push_name || 'Unknown'),
+            content: m.content || '[' + m.message_type + ']',
+            type: m.message_type, time: m.message_timestamp
+        }));
+        res.json({ total: results.length, messages: results });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+console.log('Message search API ready');
