@@ -5118,7 +5118,7 @@ app.post('/api/session/:id/typing', async (req, res) => {
 });
 
 // 獲取 WebSocket 連接信息
-app.get('/api/ws-info', (req, res) => {
+app.get('/api/crm/ws-info', (req, res) => {
     res.json({
         url: 'wss://' + req.headers.host,
         port: 3000,
