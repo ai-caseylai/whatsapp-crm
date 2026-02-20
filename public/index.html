@@ -407,8 +407,11 @@ if (!token) { window.location.href = "/login.html"; }
                     }
                     if (!content) content = "[影片]";
                 } else if (msgType === "audioMessage" || msgType === "pttMessage") {
-                    const audioPath = m.attachment_path ? "/media/" + m.attachment_path : "/media/" + m.message_id + ".ogg";
-                    mediaHtml = `<div style="margin-top: 0.5rem;"><audio src="${audioPath}" style="width: 200px;" controls preload="metadata"></audio></div>`;
+                    if (m.attachment_path) {
+                        mediaHtml = `<div style="margin-top: 0.5rem;"><audio src="/media/${m.attachment_path}" style="width: 200px;" controls preload="metadata"></audio></div>`;
+                    } else {
+                        mediaHtml = `<div style="margin-top: 0.5rem;padding:0.5rem;background:#333;border-radius:8px;color:#888;">🎤 [語音] - 需要下載</div>`;
+                    }
                     content = "🎤 語音訊息";
                 } else if (msgType === "stickerMessage") {
                     if (m.attachment_path) {
