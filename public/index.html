@@ -255,6 +255,10 @@
     </div>
 
     <script>
+// 檢查登入狀態
+const token = localStorage.getItem("crm_token");
+if (!token) { window.location.href = "/login.html"; }
+
         let currentSessionId = localStorage.getItem('wa_crm_session_id') || 'sess_1771472517677';
         let currentChatId = null;
         let allContacts = [];
