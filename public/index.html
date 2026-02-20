@@ -399,7 +399,10 @@
 
                 return `<div class="${cls}"><div>${content}${mediaHtml}</div><div style="font-size: 0.65rem; opacity: 0.7; margin-top: 0.25rem;">${time}</div></div>`;
             }).join("");
-            container.scrollTop = container.scrollHeight;
+            // 滾動到最新訊息
+            setTimeout(() => {
+                container.scrollTop = container.scrollHeight;
+            }, 100);
         }
 
         async function sendMessage() {
