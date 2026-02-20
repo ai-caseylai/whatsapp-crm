@@ -4998,3 +4998,132 @@ app.get('/api/session/:id/chats', async (req, res) => {
     }
 });
 console.log('📋 Chats list API available at /api/session/:id/chats');
+
+// ── 擴展 WebSocket 功能 ─────────────────────────────────────────────────────
+
+// 廣播已讀回執
+function broadcastReadReceipt(sessionId, chatId, messageIds) {
+    const data = JSON.stringify({
+        type: 'read_receipt',
+        sessionId,
+        chatId,
+        messageIds,
+        timestamp: new Date().toISOString()
+    });
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(data);
+        }
+    });
+    console.log(`[WS] 📖 已讀回執: ${chatId} - ${messageIds.length} 則訊息`);
+}
+
+// 廣播正在輸入狀態
+function broadcastTyping(sessionId, chatId, isTyping) {
+    const data = JSON.stringify({
+        type: 'typing',
+        sessionId,
+        chatId,
+        isTyping,
+        timestamp: new Date().toISOString()
+    });
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(data);
+    }
+    });
+}
+
+// 廣播媒體下載完成
+function broadcastMediaDownloaded(sessionId, messageId, filename, chatId) {
+    const data = JSON.stringify({
+        type: 'media_downloaded',
+        sessionId,
+        messageId,
+        filename,
+        chatId,
+        url: `/media/${filename}`,
+        timestamp: new Date().toISOString()
+    });
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(data);
+        }
+    });
+    console.log(`[WS] 📥 媒體下載完成: ${filename}`);
+}
+
+// 廣播新訊息（增強版）
+global.broadcastNewMessage = function(sessionId, chatId, message) {
+    const data = JSON.stringify({
+        type: 'new_message',
+        sessionId,
+        chatId,
+        message,
+        timestamp: new Date().toISOString()
+    });
+    let count = 0;
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(data);
+            count++;
+        }
+    });
+    console.log(`[WS] 💬 新訊息廣播給 ${count} 個客戶端`);
+};
+
+// 擴展 WebSocket 處理
+wss.on('connection', (ws, req) => {
+    console.log('[WS] 📡 新連接');
+    
+    ws.send(JSON.stringify({ type: 'connected', message: 'WebSocket 已連接' }));
+    
+    ws.on('message', (data) => {
+        try {
+            const msg = JSON.parse(data);
+            
+            // 處理正在輸入
+            if (msg.type === 'typing') {
+                broadcastTyping(msg.sessionId, msg.chatId, msg.isTyping);
+            }
+            
+            // 處理已讀
+            if (msg.type === 'mark_read') {
+                broadcastReadReceipt(msg.sessionId, msg.chatId, msg.messageIds);
+            }
+        } catch (e) {}
+    });
+    
+    ws.on('close', () => console.log('[WS] 🔌 斷開連接'));
+});
+
+console.log('✅ WebSocket 擴展功能已啟動');
+
+// ── 實時通知 API ───────────────────────────────────────────────────────────
+
+// 標記已讀
+app.post('/api/session/:id/mark-read', async (req, res) => {
+    const { id } = req.params;
+    const { chatId, messageIds } = req.body;
+    broadcastReadReceipt(id, chatId, messageIds || []);
+    res.json({ success: true });
+});
+
+// 發送正在輸入狀態
+app.post('/api/session/:id/typing', async (req, res) => {
+    const { id } = req.params;
+    const { chatId, isTyping } = req.body;
+    broadcastTyping(id, chatId, isTyping !== false);
+    res.json({ success: true });
+});
+
+// 獲取 WebSocket 連接信息
+app.get('/api/ws-info', (req, res) => {
+    res.json({
+        url: 'wss://' + req.headers.host,
+        port: 3000,
+        connected: wss.clients.size
+    });
+});
+
+console.log('✅ 實時通知 API 已啟動');

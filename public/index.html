@@ -483,6 +483,40 @@ if (!token) { window.location.href = "/login.html"; }
             location.reload(); 
         }
 
+        // WebSocket 連接
+        let ws;
+        function connectWebSocket() {
+            const wsUrl = "wss://" + window.location.host;
+            ws = new WebSocket(wsUrl);
+            ws.onopen = () => console.log("WS 已連接");
+            ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "new_message" && data.chatId === currentChatId) {
+                    // 新訊息 - 重新載入
+                    selectChat(currentChatId, document.getElementById("chat-name").textContent);
+                    showNotification("💬 新訊息", data.message?.content?.substring(0,50) || "媒體");
+                } else if (data.type === "typing" && data.chatId === currentChatId) {
+                    showTyping(data.isTyping);
+                } else if (data.type === "media_downloaded") {
+                    showNotification("📥 媒體下載完成", data.filename);
+                } else if (data.type === "read_receipt") {
+                    showNotification("📖 已讀", "對方已讀取訊息");
+                }
+            };
+            ws.onclose = () => setTimeout(connectWebSocket, 3000);
+        }
+        function showNotification(title, body) {
+            if (Notification.permission === "granted") {
+                new Notification(title, { body, icon: "/media/icon.png" });
+            }
+            console.log(title, body);
+        }
+        function showTyping(isTyping) {
+            const el = document.getElementById("chat-status");
+            if (el) el.textContent = isTyping ? "正在輸入..." : "";
+        }
+        connectWebSocket();
+
         init();
     </script>
 </body>
