@@ -378,10 +378,47 @@
         }
 
         async function sendMessage() {
-            const input = document.getElementById('message-input');
+            const input = document.getElementById("message-input");
             const text = input.value.trim();
             if (!text || !currentChatId) return;
-            input.value = '';
+
+            // 顯示發送中的訊息
+            const container = document.getElementById("messages");
+            const tempDiv = document.createElement("div");
+            tempDiv.className = "message-out";
+            tempDiv.innerHTML = `<div>${text}</div><div style="font-size: 0.65rem; opacity: 0.7; margin-top: 0.25rem;">發送中...</div>`;
+            container.appendChild(tempDiv);
+            container.scrollTop = container.scrollHeight;
+
+            input.value = "";
+
+            try {
+                const res = await fetch("/api/crm/messages/send", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer casey-crm"
+                    },
+                    body: JSON.stringify({
+                        sessionId: currentSessionId,
+                        recipient: currentChatId,
+                        text: text
+                    })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    // 更新狀態爲已發送
+                    tempDiv.querySelector("div:last-child").textContent = "已發送 ✓";
+                } else {
+                    tempDiv.querySelector("div:last-child").textContent = "發送失敗";
+                    tempDiv.style.opacity = "0.5";
+                }
+            } catch (e) {
+                console.error("發送失敗:", e);
+                tempDiv.querySelector("div:last-child").textContent = "發送失敗";
+                tempDiv.style.opacity = "0.5";
+            }
         }
 
         function openSessionModal() {
