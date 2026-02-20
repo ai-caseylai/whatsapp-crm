@@ -366,7 +366,7 @@
             const container = document.getElementById("messages");
             container.innerHTML = messages.map(m => {
                 const cls = m.from_me ? "message-out" : "message-in";
-                const time = m.message_timestamp ? new Date(m.message_timestamp).toLocaleTimeString("zh-TW", {hour: "2-digit", minute: "2-digit"}) : "";
+                const time = m.message_timestamp ? new Date(m.message_timestamp).toLocaleDateString("zh-TW", {month: "short", day: "numeric"}) + " " + new Date(m.message_timestamp).toLocaleTimeString("zh-TW", {hour: "2-digit", minute: "2-digit"}) : "";
                 const msgType = m.message_type || "";
                 let content = m.content || "";
                 let mediaHtml = "";
