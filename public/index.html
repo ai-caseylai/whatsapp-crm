@@ -501,10 +501,21 @@ if (!token) { window.location.href = "/login.html"; }
             ws.onopen = () => console.log("WS 已連接");
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
+                if (data.type === "connected") {
+                    console.log("WS 已連接");
+                    return;
+                }
                 if (data.type === "new_message") {
-                    // 新訊息 - 重新載入
-                    selectChat(currentChatId, document.getElementById("chat-name").textContent);
-                    showNotification("💬 新訊息", data.message?.content?.substring(0,50) || "媒體");
+                    const msg = data.message;
+                    const preview = msg?.content?.substring(0,50) || "媒體";
+                    if (msg?.from_me) {
+                        showNotification("📤 已發送", preview);
+                    } else {
+                        showNotification("💬 新訊息", preview);
+                    }
+                    if (data.chatId === currentChatId) {
+                        selectChat(currentChatId, document.getElementById("chat-name").textContent);
+                    }
                 } else if (data.type === "typing" && data.chatId === currentChatId) {
                     showTyping(data.isTyping);
                 } else if (data.type === "media_downloaded") {
