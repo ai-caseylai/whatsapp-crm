@@ -384,7 +384,7 @@ if (!token) { window.location.href = "/login.html"; }
                     }
                     if (!content) content = "[圖片]";
                 } else if (msgType === "videoMessage") {
-                    const videoPath = m.attachment_path ? "/media/" + m.attachment_path : "/media/" + m.message_id + ".mp4";
+                    const videoPath = m.attachment_path ? "/media/" + m.attachment_path : null;
                     mediaHtml = `<div style="margin-top: 0.5rem;"><video src="${videoPath}" style="max-width: 250px; border-radius: 8px;" controls preload="metadata"></video></div>`;
                     if (!content) content = "[影片]";
                 } else if (msgType === "audioMessage" || msgType === "pttMessage") {
@@ -392,11 +392,11 @@ if (!token) { window.location.href = "/login.html"; }
                     mediaHtml = `<div style="margin-top: 0.5rem;"><audio src="${audioPath}" style="width: 200px;" controls preload="metadata"></audio></div>`;
                     content = "🎤 語音訊息";
                 } else if (msgType === "stickerMessage") {
-                    const stickerPath = m.attachment_path ? "/media/" + m.attachment_path : "/media/" + m.message_id + ".webp";
+                    const stickerPath = m.attachment_path ? "/media/" + m.attachment_path : null;
                     mediaHtml = `<div style="margin-top: 0.5rem;"><img src="${stickerPath}" style="max-width: 150px;"></div>`;
                     content = "";
                 } else if (msgType === "documentMessage") {
-                    const docPath = m.attachment_path ? "/media/" + m.attachment_path : "/media/" + m.message_id;
+                    const docPath = m.attachment_path ? "/media/" + m.attachment_path : null;
                     mediaHtml = `<div style="margin-top: 0.5rem;"><a href="${docPath}" target="_blank">📎 下載文件</a></div>`;
                     if (!content) content = "[文件]";
                 }
