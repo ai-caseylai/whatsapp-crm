@@ -34,20 +34,9 @@
             scrollbar-width: thin;
             scrollbar-color: var(--primary) var(--bg-main);
         }
-        .chat-list-container::-webkit-scrollbar {
-            width: 8px;
-        }
-        .chat-list-container::-webkit-scrollbar-track {
-            background: var(--bg-main);
-            border-radius: 4px;
-        }
-        .chat-list-container::-webkit-scrollbar-thumb {
-            background: var(--primary);
-            border-radius: 4px;
-        }
-        .chat-list-container::-webkit-scrollbar-thumb:hover {
-            background: var(--primary-light);
-        }
+        .chat-list-container::-webkit-scrollbar { width: 8px; }
+        .chat-list-container::-webkit-scrollbar-track { background: var(--bg-main); border-radius: 4px; }
+        .chat-list-container::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 4px; }
         .chat-area { 
             display: flex; 
             flex-direction: column; 
@@ -70,20 +59,9 @@
             scrollbar-width: thin;
             scrollbar-color: var(--primary) var(--bg-dark);
         }
-        .messages-area::-webkit-scrollbar {
-            width: 8px;
-        }
-        .messages-area::-webkit-scrollbar-track {
-            background: var(--bg-dark);
-            border-radius: 4px;
-        }
-        .messages-area::-webkit-scrollbar-thumb {
-            background: var(--primary);
-            border-radius: 4px;
-        }
-        .messages-area::-webkit-scrollbar-thumb:hover {
-            background: var(--primary-light);
-        }
+        .messages-area::-webkit-scrollbar { width: 8px; }
+        .messages-area::-webkit-scrollbar-track { background: var(--bg-dark); border-radius: 4px; }
+        .messages-area::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 4px; }
         .message-in { 
             background: var(--bg-card); 
             border-radius: var(--radius-lg); 
@@ -129,6 +107,87 @@
             flex-shrink: 0; 
         }
         .avatar img { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* Session Modal - 居中模態框 */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-xl);
+            padding: 1.5rem;
+            width: 90%;
+            max-width: 400px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0 0 1rem 0;
+            color: var(--text-primary);
+        }
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+        .session-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: left;
+            margin-bottom: 0.5rem;
+        }
+        .session-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--primary);
+        }
+        .session-btn.active {
+            background: rgba(0, 210, 106, 0.1);
+            border-color: var(--primary);
+        }
+        .session-status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .session-status-dot.connected {
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+        .session-status-dot.disconnected {
+            background: var(--error);
+        }
     </style>
 </head>
 <body>
@@ -138,10 +197,11 @@
             WhatsApp CRM
         </h1>
         <div style="display: flex; align-items: center; gap: 1rem;">
-            <div class="session-selector" onclick="openSessionModal()">
-                <div class="session-status" id="sessionStatus"></div>
+            <button onclick="openSessionModal()" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: rgba(0, 210, 106, 0.1); border: 1px solid rgba(0, 210, 106, 0.3); border-radius: 9999px; cursor: pointer; color: var(--text-primary); transition: all 0.2s;">
+                <div id="sessionStatus" style="width: 8px; height: 8px; border-radius: 50%; background: var(--success);"></div>
                 <span id="sessionName">載入中...</span>
-            </div>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">▼</span>
+            </button>
             <nav class="nav-links">
                 <a href="index.html" style="color: var(--primary);">💬 聊天</a>
                 <a href="contacts-list.html">👥 聯絡人</a>
@@ -152,7 +212,6 @@
     </header>
 
     <div class="chat-container">
-        <!-- 左側：聯絡人清單（獨立滾動） -->
         <div class="sidebar">
             <div class="sidebar-header">
                 <input type="text" id="search" class="input" placeholder="🔍 搜尋聊天..." oninput="filterChats()">
@@ -162,7 +221,6 @@
             </div>
         </div>
 
-        <!-- 右側：聊天內容（獨立滾動） -->
         <div class="chat-area">
             <div id="chat-header" class="chat-header" style="display: none;">
                 <div style="display: flex; align-items: center; gap: 1rem;">
@@ -187,10 +245,11 @@
         </div>
     </div>
 
+    <!-- Session Modal -->
     <div id="sessionModal" class="modal-overlay" onclick="if(event.target===this)closeSessionModal()">
-        <div class="modal">
-            <h3 style="margin: 0 0 1rem 0;">切換 Session</h3>
-            <div id="sessionList" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        <div class="modal-box">
+            <h3 class="modal-title">切換 WhatsApp Session</h3>
+            <div id="sessionList"></div>
             <button class="btn btn-secondary" style="width: 100%; margin-top: 1rem;" onclick="closeSessionModal()">關閉</button>
         </div>
     </div>
@@ -328,15 +387,32 @@
         function openSessionModal() {
             const list = document.getElementById('sessionList');
             list.innerHTML = allSessions.map(s => {
-                const active = s.id === currentSessionId ? 'btn-primary' : 'btn-secondary';
-                const status = s.status === 'connected' ? '🟢' : '🔴';
-                return `<button class="btn ${active}" style="justify-content: flex-start; width: 100%;" onclick="selectSession('${s.id}')">${status} ${s.name || s.id.split('_')[1]}</button>`;
-            }).join('') || '<p style="color: var(--text-muted);">沒有 session</p>';
+                const isActive = s.id === currentSessionId;
+                const statusClass = s.status === 'connected' ? 'connected' : 'disconnected';
+                const name = s.name || s.id.split('_')[1] || 'Unknown';
+                return `
+                    <button class="session-btn ${isActive ? 'active' : ''}" onclick="selectSession('${s.id}')">
+                        <div class="session-status-dot ${statusClass}"></div>
+                        <div style="flex: 1;">
+                            <div style="font-weight: 500;">${name}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">${s.status === 'connected' ? '已連接' : '未連接'}</div>
+                        </div>
+                        ${isActive ? '<span style="color: var(--primary);">✓</span>' : ''}
+                    </button>
+                `;
+            }).join('') || '<p style="color: var(--text-muted); text-align: center;">沒有可用的 Session</p>';
             document.getElementById('sessionModal').classList.add('active');
         }
 
-        function closeSessionModal() { document.getElementById('sessionModal').classList.remove('active'); }
-        function selectSession(id) { localStorage.setItem('wa_crm_session_id', id); closeSessionModal(); location.reload(); }
+        function closeSessionModal() { 
+            document.getElementById('sessionModal').classList.remove('active'); 
+        }
+        
+        function selectSession(id) { 
+            localStorage.setItem('wa_crm_session_id', id); 
+            closeSessionModal(); 
+            location.reload(); 
+        }
 
         init();
     </script>
