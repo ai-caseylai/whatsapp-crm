@@ -394,7 +394,7 @@ if (!token) { window.location.href = "/login.html"; }
                 if (msgType === "imageMessage") {
                     const imgPath = m.attachment_path ? "/media/" + m.attachment_path : null;
                     if (imgPath) {
-                        mediaHtml = `<div style="margin-top: 0.5rem;"><img src="${imgPath}" style="max-width: 200px; border-radius: 8px;">`;
+                        mediaHtml = `<div style="margin-top: 0.5rem;"><img src="${imgPath}" style="max-width: 200px; border-radius: 8px;"></div>`;
                     } else {
                         mediaHtml = `<div style="margin-top: 0.5rem;padding:0.75rem;background:#333;border-radius:8px;color:#888;text-align:center;">🖼️ [圖片] - 需要下載</div>`;
                     }
