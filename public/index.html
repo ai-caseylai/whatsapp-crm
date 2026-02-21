@@ -281,7 +281,7 @@ if (!token) { window.location.href = "/login.html"; }
         async function getAvatar(jid) {
             if (avatarCache.has(jid)) return avatarCache.get(jid);
             try {
-                const res = await fetch(`/api/session/${currentSessionId}/avatar/${encodeURIComponent(jid)}`);
+                if (jid.includes("status@")) return null; const res = await fetch(`/api/session/${currentSessionId}/avatar/${encodeURIComponent(jid)}`);
                 if (res.ok) {
                     const data = await res.json();
                     if (data.url) {
@@ -514,7 +514,7 @@ if (!token) { window.location.href = "/login.html"; }
         // WebSocket 連接
         let ws;
         function connectWebSocket() {
-            const wsUrl = "wss://" + window.location.host + "/ws";
+            const wsUrl = "wss://whatsapp-crm.techforliving.app:3000";
             ws = new WebSocket(wsUrl);
             ws.onopen = () => console.log("WS 已連接");
     console.log("[WS] 連接成功");
