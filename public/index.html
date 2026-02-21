@@ -263,7 +263,7 @@ window.addEventListener("unhandledrejection", function(e) {
     console.error("[未處理 Promise 錯誤]", e.reason);
 });
 
-console.log("=== WhatsApp CRM 載入開始 ===");
+console.log("=== WhatsApp CRM 載入開始 (v1.2) ===");
 console.log("時間:", new Date().toISOString());
 console.log("URL:", window.location.href);
 console.log("User Agent:", navigator.userAgent);
@@ -514,7 +514,7 @@ if (!token) { window.location.href = "/login.html"; }
         // WebSocket 連接
         let ws;
         function connectWebSocket() {
-            const wsUrl = "wss://whatsapp-crm.techforliving.app:3000";
+            const wsUrl = "wss://whatsapp-crm.techforliving.app/ws";
             ws = new WebSocket(wsUrl);
             ws.onopen = () => console.log("WS 已連接");
     console.log("[WS] 連接成功");
